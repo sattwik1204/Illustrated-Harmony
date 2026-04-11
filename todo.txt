@@ -1,3 +1,0 @@
-need a toggle between radial and graph maps(radial being default)
-add a how to guide tab 
-reharmonize pop up feature to select the following options ..
