@@ -18,6 +18,7 @@ interface HarmonicMapProps {
   activeChord: string | null;
   progression: string[];
   showRoman: boolean;
+  
   contextKey: string | null;
 }
 
