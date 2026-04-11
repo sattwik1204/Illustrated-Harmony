@@ -1,0 +1,1745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Coloured Harmony — Visual music theory and composition tool with harmonic maps, voice leading, and reharmonization">
+  <title>Coloured Harmony — Composition Engine</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #080810; color: #eeebe4; font-family: Georgia, serif; overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0d0d1a; }
+    ::-webkit-scrollbar-thumb { background: #1c1c30; border-radius: 3px; }
+    input[type="range"] { height: 4px; }
+    select, input, button { outline: none; }
+    @keyframes pulse-ring { 0%,100% { opacity: 0.6; } 50% { opacity: 0.1; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 1: COLOR CONSTANTS & CONFIG
+   ═══════════════════════════════════════════════════════════════════ */
+
+const BG      = "#080810";
+const SURFACE = "#0d0d1a";
+const CARD    = "#111120";
+const BORDER  = "#1c1c30";
+const TEXT    = "#eeebe4";
+const MUTED   = "#555570";
+const DIMCOL  = "#22223a";
+const MAJOR   = "#e05060";
+const MINOR   = "#40b0c0";
+const DOM7    = "#c8a020";
+const DIMIN   = "#9050c0";
+const ACCENT  = "#f0c040";
+const EXT_C   = "#40c090";
+const ALT_C   = "#e06040";
+const SUB_C   = "#b060e0";
+const INV_C   = "#4090e0";
+
+const TYPE_COLOR = { major: MAJOR, minor: MINOR, dom7: DOM7, dim: DIMIN };
+const TAG_COLOR = { extensions: EXT_C, tensions: EXT_C, inversions: INV_C, substitutions: SUB_C, secondary_dom: ACCENT, altered: ALT_C };
+
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const ROOT_MAP = {
+  "C":0,"C#":1,"Db":1,"D":2,"D#":3,"Eb":3,"E":4,"Fb":4,"E#":5,
+  "F":5,"F#":6,"Gb":6,"G":7,"G#":8,"Ab":8,"A":9,"A#":10,"Bb":10,"B":11,"Cb":11
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 2: AUDIO ENGINE
+   ═══════════════════════════════════════════════════════════════════ */
+
+let _audioCtx = null;
+let _playStop = false;
+let _lastMidi = null;
+
+function getAudioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+
+function chordToMidi(label) {
+  if (!label || label.length === 0) return [60, 64, 67];
+  let root, rest;
+  if (label.length >= 2 && (label[1] === '#' || label[1] === 'b')) {
+    root = label.slice(0, 2);
+    rest = label.slice(2);
+  } else {
+    root = label[0];
+    rest = label.slice(1);
+  }
+  // Strip slash (inversions)
+  const slashIdx = rest.indexOf('/');
+  if (slashIdx >= 0) rest = rest.slice(0, slashIdx);
+
+  const rootST = ROOT_MAP[root];
+  if (rootST === undefined) return [60, 64, 67];
+
+  // Detect quality
+  let intervals;
+  if (rest.includes('°') || rest.includes('dim')) {
+    intervals = [0, 3, 6];
+  } else if (rest.includes('aug') || (rest.length > 0 && rest[0] === '+')) {
+    intervals = [0, 4, 8];
+  } else if (rest.startsWith('m') && !rest.startsWith('maj')) {
+    intervals = [0, 3, 7];
+  } else {
+    intervals = [0, 4, 7];
+  }
+  // Handle m7b5 / half-diminished
+  if (rest.includes('m7b5') || rest.includes('ø')) {
+    intervals = [0, 3, 6];
+  }
+  // Modify 5th for b5/#5 in triad
+  if (rest.includes('b5') && !rest.includes('m7b5')) {
+    intervals = intervals.map(i => i === 7 ? 6 : (i === 8 ? 6 : i));
+  }
+  if (rest.includes('#5') && !rest.includes('aug')) {
+    intervals = intervals.map(i => i === 7 ? 8 : i);
+  }
+
+  // Add 7th
+  if (rest.includes('maj7') || rest.includes('maj9') || rest.includes('maj11') || rest.includes('maj13')) {
+    intervals.push(11);
+  } else if (rest.includes('7') || rest.includes('9') || rest.includes('11') || rest.includes('13')) {
+    if (rest.includes('°') || rest.includes('dim')) {
+      intervals.push(9);
+    } else {
+      intervals.push(10);
+    }
+  }
+
+  // Extensions
+  if (/9/.test(rest) && !/b9/.test(rest) && !/#9/.test(rest)) {
+    if (!intervals.includes(10) && !intervals.includes(11)) intervals.push(10);
+    intervals.push(14);
+  }
+  if (/11/.test(rest) && !/#11/.test(rest)) {
+    if (!intervals.includes(10) && !intervals.includes(11)) intervals.push(10);
+    intervals.push(17);
+  }
+  if (/13/.test(rest) && !/b13/.test(rest)) {
+    if (!intervals.includes(10) && !intervals.includes(11)) intervals.push(10);
+    intervals.push(21);
+  }
+  // Altered tones
+  if (rest.includes('b9')) intervals.push(13);
+  if (rest.includes('#9')) intervals.push(15);
+  if (rest.includes('#11')) intervals.push(18);
+  if (rest.includes('b13')) intervals.push(20);
+
+  const base = 60 + rootST;
+  return [...new Set(intervals)].sort((a,b)=>a-b).map(i => base + i);
+}
+
+function voiceLead(prev, next) {
+  if (!prev || prev.length === 0) return next;
+  return next.map(n => {
+    const options = [n - 12, n, n + 12];
+    let best = n;
+    let bestDist = Infinity;
+    options.forEach(opt => {
+      prev.forEach(p => {
+        const d = Math.abs(opt - p);
+        if (d < bestDist) { bestDist = d; best = opt; }
+      });
+    });
+    return best;
+  }).sort((a, b) => a - b);
+}
+
+function playOne(label, duration) {
+  if (duration === undefined) duration = 1.4;
+  const ctx = getAudioCtx();
+  let midi = chordToMidi(label);
+  if (_lastMidi) midi = voiceLead(_lastMidi, midi);
+  _lastMidi = midi;
+
+  const delay = ctx.createDelay();
+  delay.delayTime.value = 0.18;
+  const wetGain = ctx.createGain();
+  wetGain.gain.value = 0.12;
+  delay.connect(wetGain);
+  wetGain.connect(ctx.destination);
+
+  midi.forEach(function(note, voiceIdx) {
+    const freq = 440 * Math.pow(2, (note - 69) / 12);
+    const t0 = ctx.currentTime + voiceIdx * 0.015;
+
+    const osc1 = ctx.createOscillator();
+    osc1.type = 'sine';
+    osc1.frequency.value = freq;
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'triangle';
+    osc2.frequency.value = freq + (Math.random() * 1.5 - 0.75);
+
+    const g1 = ctx.createGain();
+    const g2 = ctx.createGain();
+    const mg1 = 0.6 / midi.length;
+    const mg2 = 0.35 / midi.length;
+
+    // ADSR: attack 20ms, decay to 60% at 120ms, sustain 50% at half, release at end
+    g1.gain.setValueAtTime(0, t0);
+    g1.gain.linearRampToValueAtTime(mg1, t0 + 0.02);
+    g1.gain.linearRampToValueAtTime(mg1 * 0.6, t0 + 0.12);
+    g1.gain.linearRampToValueAtTime(mg1 * 0.5, t0 + duration * 0.5);
+    g1.gain.linearRampToValueAtTime(0, t0 + duration);
+
+    g2.gain.setValueAtTime(0, t0);
+    g2.gain.linearRampToValueAtTime(mg2, t0 + 0.02);
+    g2.gain.linearRampToValueAtTime(mg2 * 0.6, t0 + 0.12);
+    g2.gain.linearRampToValueAtTime(mg2 * 0.5, t0 + duration * 0.5);
+    g2.gain.linearRampToValueAtTime(0, t0 + duration);
+
+    osc1.connect(g1); g1.connect(ctx.destination); g1.connect(delay);
+    osc2.connect(g2); g2.connect(ctx.destination); g2.connect(delay);
+
+    osc1.start(t0); osc2.start(t0);
+    osc1.stop(t0 + duration + 0.05);
+    osc2.stop(t0 + duration + 0.05);
+  });
+}
+
+async function playProgWithVL(chords, bpm, onStep, beatsPerChord) {
+  if (beatsPerChord === undefined) beatsPerChord = 2;
+  _playStop = false;
+  const dur = (60 / bpm) * beatsPerChord;
+  for (let i = 0; i < chords.length; i++) {
+    if (_playStop) break;
+    onStep(i);
+    playOne(chords[i], dur);
+    await new Promise(function(r) { setTimeout(r, dur * 1000); });
+  }
+}
+
+function stopPlay() { _playStop = true; }
+function resetVoicing() { _lastMidi = null; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 3: DATA MODEL
+   ═══════════════════════════════════════════════════════════════════ */
+
+const KEY_ORDER = ["C","G","D","A","E","B","F#","Db","Ab","Eb","Bb","F"];
+
+const CLUSTER_DATA = [
+  { key:"C",  major:"C",  minor:"Am",  dom7:"G7",  dim:"B°" },
+  { key:"G",  major:"G",  minor:"Em",  dom7:"D7",  dim:"F#°" },
+  { key:"D",  major:"D",  minor:"Bm",  dom7:"A7",  dim:"C#°" },
+  { key:"A",  major:"A",  minor:"F#m", dom7:"E7",  dim:"G#°" },
+  { key:"E",  major:"E",  minor:"C#m", dom7:"B7",  dim:"D#°" },
+  { key:"B",  major:"B",  minor:"G#m", dom7:"F#7", dim:"A#°" },
+  { key:"F#", major:"F#", minor:"D#m", dom7:"C#7", dim:"E#°" },
+  { key:"Db", major:"Db", minor:"Bbm", dom7:"Ab7", dim:"C°" },
+  { key:"Ab", major:"Ab", minor:"Fm",  dom7:"Eb7", dim:"G°" },
+  { key:"Eb", major:"Eb", minor:"Cm",  dom7:"Bb7", dim:"D°" },
+  { key:"Bb", major:"Bb", minor:"Gm",  dom7:"F7",  dim:"A°" },
+  { key:"F",  major:"F",  minor:"Dm",  dom7:"C7",  dim:"E°" },
+];
+
+// Build 48 nodes
+const NODES = {};
+CLUSTER_DATA.forEach(function(c, i) {
+  NODES[c.major] = { type:"major", cluster:i };
+  NODES[c.minor] = { type:"minor", cluster:i };
+  NODES[c.dom7]  = { type:"dom7",  cluster:i };
+  NODES[c.dim]   = { type:"dim",   cluster:i };
+});
+
+// Edge types
+const EDGE_TYPES = {
+  "v-i":  { label: "V→I",       color: "#c8a020",   dashed: false, weight: 2.0 },
+  "rel":  { label: "Maj↔Min",   color: "#40b0c0",   dashed: false, weight: 1.8 },
+  "ii-v": { label: "ii→V",      color: "#f0c040",   dashed: true,  weight: 1.4 },
+  "dom":  { label: "I→Dom7",    color: "#c8902044", dashed: true,  weight: 1.0 },
+  "v-vi": { label: "Deceptive", color: "#e0506066", dashed: true,  weight: 1.2 },
+  "dim-r":{ label: "Dim°→I",    color: "#9050c0",   dashed: true,  weight: 1.2 },
+  "fifth":{ label: "5ths",      color: "#e0506044", dashed: true,  weight: 0.8 },
+  "cross":{ label: "Cross-key", color: "#c8a02055", dashed: true,  weight: 1.0 },
+};
+
+// V of relative minor lookup: cluster index → dom7 chord that is V/vi
+const V_OF_VI = [
+  "E7","B7","F#7","C#7",null,null,null,"F7","C7","G7","D7","A7"
+];
+
+// Build edges
+const EDGES = [];
+CLUSTER_DATA.forEach(function(c, i) {
+  EDGES.push({ from:c.major, to:c.minor, type:"rel",   bi:true });
+  EDGES.push({ from:c.minor, to:c.dom7,  type:"ii-v"          });
+  EDGES.push({ from:c.dom7,  to:c.major, type:"v-i"           });
+  EDGES.push({ from:c.dom7,  to:c.minor, type:"v-vi"          });
+  EDGES.push({ from:c.major, to:c.dom7,  type:"dom"           });
+  EDGES.push({ from:c.dim,   to:c.major, type:"dim-r"         });
+  // V of relative minor
+  if (V_OF_VI[i]) {
+    EDGES.push({ from:V_OF_VI[i], to:c.minor, type:"v-i" });
+  }
+  // Tritone sub: dom7 → major of cluster 6 positions away
+  var tri = CLUSTER_DATA[(i + 6) % 12];
+  EDGES.push({ from:c.dom7, to:tri.major, type:"cross" });
+  // Circle of fifths
+  var next = CLUSTER_DATA[(i + 1) % 12];
+  EDGES.push({ from:c.major, to:next.major, type:"fifth" });
+});
+// Extra cross-key secondaries
+[["E7","D"],["A7","G"],["B7","A"],["C#7","B"],["D7","C"],["C7","Bb"]].forEach(function(pair) {
+  EDGES.push({ from:pair[0], to:pair[1], type:"cross" });
+});
+
+// Roman numeral lookup
+const DIATONIC_IN_KEY = {
+  C:  { C:"I", Dm:"ii", Em:"iii", F:"IV", G:"V", Am:"vi", "G7":"V7", "D7":"V/V", "A7":"V/ii", "E7":"V/vi" },
+  G:  { G:"I", Am:"ii", Bm:"iii", C:"IV", D:"V", Em:"vi", "D7":"V7", "A7":"V/V", "B7":"V/vi", "E7":"V/ii" },
+  D:  { D:"I", Em:"ii", "F#m":"iii", G:"IV", A:"V", Bm:"vi", "A7":"V7", "E7":"V/V", "F#7":"V/vi", "B7":"V/ii" },
+  F:  { F:"I", Gm:"ii", Am:"iii", Bb:"IV", C:"V", Dm:"vi", "C7":"V7", "G7":"V/V", "D7":"V/ii", "A7":"V/vi" },
+  Bb: { Bb:"I", Cm:"ii", Dm:"iii", Eb:"IV", F:"V", Gm:"vi", "F7":"V7", "C7":"V/V", "G7":"V/ii", "D7":"V/vi" },
+  Am: { Am:"i", "B°":"ii°", C:"III", Dm:"iv", Em:"v", F:"VI", G:"VII", "E7":"V7", "A7":"V/iv" },
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 4: UTILITY FUNCTIONS
+   ═══════════════════════════════════════════════════════════════════ */
+
+const RING_R = { major: 0.42, minor: 0.31, dom7: 0.21, dim: 0.12 };
+
+function radialPos(cluster, type, size) {
+  var r = size * RING_R[type];
+  var a = (cluster * 30 - 90) * Math.PI / 180;
+  return { x: size / 2 + r * Math.cos(a), y: size / 2 + r * Math.sin(a) };
+}
+
+function graphPos(cluster, type, size) {
+  var cW = size * 0.22, cH = size * 0.30;
+  var startX = size * 0.10, startY = size * 0.07;
+  var col = cluster % 4, row = Math.floor(cluster / 4);
+  var cx = startX + col * cW + cW / 2;
+  var cy = startY + row * cH + cH / 2;
+  var offsets = {
+    major: { dx: 0, dy: -cH * 0.28 },
+    minor: { dx: -cW * 0.30, dy: cH * 0.16 },
+    dom7:  { dx: cW * 0.30, dy: cH * 0.16 },
+    dim:   { dx: 0, dy: cH * 0.40 },
+  };
+  var off = offsets[type];
+  return { x: cx + off.dx, y: cy + off.dy };
+}
+
+function tensionScore(label) {
+  var s = 0;
+  if (/7/.test(label)) s += 2;
+  if (/9|11|13/.test(label)) s += 2;
+  if (/°|dim/.test(label)) s += 4;
+  if (/aug|\+/.test(label)) s += 3;
+  if (/b9|#9|b5|#5/.test(label)) s += 3;
+  if (/alt/i.test(label)) s += 4;
+  return Math.min(s, 10);
+}
+
+function midiNoteName(midi) {
+  return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+}
+
+function analyzeVoiceLeading(chords) {
+  if (!chords || chords.length === 0) return [];
+  var result = [];
+  var prev = null;
+  chords.forEach(function(label) {
+    var midi = chordToMidi(label);
+    if (prev) midi = voiceLead(prev, midi);
+    var movements = [];
+    if (prev) {
+      var len = Math.min(midi.length, prev.length);
+      for (var i = 0; i < len; i++) {
+        movements.push(Math.abs(midi[i] - prev[i]));
+      }
+    }
+    var smooth = movements.length > 0 && movements.every(function(m) { return m <= 2; });
+    var maxMove = movements.length > 0 ? Math.max.apply(null, movements) : 0;
+    result.push({ label: label, voiced: midi.slice(), movements: movements, smooth: smooth, maxMove: maxMove });
+    prev = midi;
+  });
+  return result;
+}
+
+// Storage wrapper: window.storage with localStorage fallback
+const storage = {
+  get: function(key) {
+    try {
+      if (typeof window !== 'undefined' && window.storage && window.storage.getItem) {
+        var v = window.storage.getItem(key);
+        return v ? JSON.parse(v) : null;
+      }
+      return JSON.parse(localStorage.getItem(key));
+    } catch(e) { return null; }
+  },
+  set: function(key, val) {
+    try {
+      var s = JSON.stringify(val);
+      if (typeof window !== 'undefined' && window.storage && window.storage.setItem) {
+        window.storage.setItem(key, s);
+      } else {
+        localStorage.setItem(key, s);
+      }
+    } catch(e) {}
+  }
+};
+
+// MIDI export: Type 0 MIDI file
+function vlq(value) {
+  if (value < 0) value = 0;
+  if (value < 128) return [value];
+  var bytes = [];
+  bytes.push(value & 0x7F);
+  value >>= 7;
+  while (value > 0) {
+    bytes.push((value & 0x7F) | 0x80);
+    value >>= 7;
+  }
+  return bytes.reverse();
+}
+
+function exportMidi(chords, bpm, beatsPerChord) {
+  var ticksPerBeat = 480;
+  var chordTicks = ticksPerBeat * beatsPerChord;
+  // Voice lead the progression
+  var lastM = null;
+  var voicedChords = chords.map(function(c) {
+    var midi = chordToMidi(c);
+    if (lastM) midi = voiceLead(lastM, midi);
+    lastM = midi;
+    return midi;
+  });
+  var trackData = [];
+  // Tempo meta event
+  var microsPerBeat = Math.round(60000000 / bpm);
+  trackData.push(0x00);
+  trackData.push(0xFF, 0x51, 0x03);
+  trackData.push((microsPerBeat >> 16) & 0xFF, (microsPerBeat >> 8) & 0xFF, microsPerBeat & 0xFF);
+  // Note events
+  voicedChords.forEach(function(notes, ci) {
+    notes.forEach(function(note, ni) {
+      var delta = (ci === 0 && ni === 0) ? 0 : (ni === 0 ? 10 : 0);
+      trackData.push.apply(trackData, vlq(delta));
+      trackData.push(0x90, note & 0x7F, 100);
+    });
+    notes.forEach(function(note, ni) {
+      var delta = ni === 0 ? (chordTicks - 10) : 0;
+      trackData.push.apply(trackData, vlq(delta));
+      trackData.push(0x80, note & 0x7F, 0);
+    });
+  });
+  // End of track
+  trackData.push(0x00, 0xFF, 0x2F, 0x00);
+  // Build file
+  var header = [
+    0x4D,0x54,0x68,0x64, 0x00,0x00,0x00,0x06,
+    0x00,0x00, 0x00,0x01,
+    (ticksPerBeat >> 8) & 0xFF, ticksPerBeat & 0xFF
+  ];
+  var trackHeader = [
+    0x4D,0x54,0x72,0x6B,
+    (trackData.length >> 24) & 0xFF, (trackData.length >> 16) & 0xFF,
+    (trackData.length >> 8) & 0xFF, trackData.length & 0xFF
+  ];
+  var bytes = new Uint8Array(header.concat(trackHeader, trackData));
+  var blob = new Blob([bytes], { type: 'audio/midi' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'progression.mid';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 5: LOCAL REHARMONIZATION ENGINE
+   ═══════════════════════════════════════════════════════════════════ */
+
+function parseChordRoot(label) {
+  if (!label || label.length === 0) return "C";
+  if (label.length >= 2 && (label[1] === '#' || label[1] === 'b')) return label.slice(0, 2);
+  return label[0];
+}
+
+function parseChordQuality(label) {
+  var root = parseChordRoot(label);
+  var rest = label.slice(root.length);
+  if (rest.includes('°') || rest.includes('dim')) return 'dim';
+  if (rest.includes('aug') || (rest.length > 0 && rest[0] === '+')) return 'aug';
+  if (rest.startsWith('m') && !rest.startsWith('maj')) return 'minor';
+  return 'major';
+}
+
+function detectKey(chords) {
+  if (!chords || chords.length === 0) return "C";
+  // V7 → major resolution
+  for (var i = 0; i < chords.length - 1; i++) {
+    if (chords[i].includes('7') && parseChordQuality(chords[i+1]) === 'major') {
+      return parseChordRoot(chords[i + 1]);
+    }
+  }
+  var firstRoot = parseChordRoot(chords[0]);
+  var lastRoot = parseChordRoot(chords[chords.length - 1]);
+  var firstST = ROOT_MAP[firstRoot];
+  var lastST = ROOT_MAP[lastRoot];
+  // First and last match
+  if (firstRoot === lastRoot) return firstRoot;
+  // Last chord is V of first
+  if (firstST !== undefined && lastST !== undefined) {
+    if ((lastST + 5) % 12 === firstST && parseChordQuality(chords[0]) === 'major') return firstRoot;
+  }
+  // First chord is major
+  if (parseChordQuality(chords[0]) === 'major') return firstRoot;
+  if (parseChordQuality(chords[chords.length-1]) === 'major') return lastRoot;
+  return firstRoot;
+}
+
+function getRoman(chord, key) {
+  var d = DIATONIC_IN_KEY[key];
+  return d ? (d[chord] || '?') : '?';
+}
+
+function getHarmonicFunction(roman) {
+  if (/^I$|^i$|^III$|^iii$/.test(roman)) return 'Tonic';
+  if (/^IV|^iv|^ii|^II/.test(roman)) return 'Subdominant';
+  if (/^V|^v$|^VII|^vii/.test(roman)) return 'Dominant';
+  if (/^vi|^VI/.test(roman)) return 'Tonic';
+  return 'Other';
+}
+
+var FEEL_MAP = { Tonic:'Home, stable resolution', Subdominant:'Gentle departure', Dominant:'Tension seeking resolution', Other:'Passing color' };
+
+function chordAnalysis(chord, key) {
+  var root = parseChordRoot(chord);
+  var quality = parseChordQuality(chord);
+  var rootST = ROOT_MAP[root] || 0;
+  var roman = getRoman(chord, key);
+  var func = getHarmonicFunction(roman);
+
+  var extensions = [];
+  if (quality === 'major') extensions = [root+'maj7', root+'maj9', root+'6'];
+  else if (quality === 'minor') extensions = [root+'m7', root+'m9', root+'m11'];
+  else if (chord.includes('7')) extensions = [root+'9', root+'13', root+'7#11'];
+  else if (quality === 'dim') extensions = [root+'m7b5'];
+
+  var tensions = func === 'Dominant' ? ['b9','#9','#11','b13'] : (quality === 'minor' ? ['add9','add11'] : ['add9']);
+  var inversions = [];
+  if (quality === 'minor') {
+    inversions.push(chord+'/'+NOTE_NAMES[(rootST+3)%12], chord+'/'+NOTE_NAMES[(rootST+7)%12]);
+  } else if (quality === 'major') {
+    inversions.push(chord+'/'+NOTE_NAMES[(rootST+4)%12], chord+'/'+NOTE_NAMES[(rootST+7)%12]);
+  }
+
+  var substitutions = [];
+  if (quality === 'major') substitutions.push(NOTE_NAMES[(rootST+9)%12]+'m');
+  if (quality === 'minor') substitutions.push(NOTE_NAMES[(rootST+3)%12]);
+  if (chord.includes('7')) substitutions.push(NOTE_NAMES[(rootST+6)%12]+'7');
+
+  var secondary_dom = NOTE_NAMES[(rootST+7)%12] + '7';
+  var altered = [];
+  if (chord.includes('7') || func === 'Dominant') altered = [root+'7alt', root+'7b9#9'];
+
+  return { chord:chord, roman:roman, function:func, extensions:extensions, tensions:tensions,
+    inversions:inversions, substitutions:substitutions, secondary_dom:secondary_dom,
+    altered:altered, feel: FEEL_MAP[func] || 'Color tone' };
+}
+
+function applyJazzExtensions(chords, key) {
+  var newChords = chords.map(function(chord) {
+    var root = parseChordRoot(chord);
+    var quality = parseChordQuality(chord);
+    if (quality === 'major') return chord.includes('7') ? root+'maj9' : root+'maj7';
+    if (quality === 'minor') return chord.includes('7') ? root+'m9' : root+'m7';
+    if (chord.includes('7')) return root+'9';
+    if (quality === 'dim') return root+'m7b5';
+    return chord;
+  });
+  return { name:"Jazz Extensions", style:"Jazz", chords:newChords,
+    technique:"Add 7ths and upper extensions to every chord",
+    feel:"Rich, warm harmony", difficulty:"Intermediate" };
+}
+
+function applyTritoneSubs(chords, key) {
+  var newChords = chords.map(function(chord) {
+    var root = parseChordRoot(chord);
+    var quality = parseChordQuality(chord);
+    var rootST = ROOT_MAP[root] || 0;
+    if (chord.includes('7') && quality !== 'dim') {
+      return NOTE_NAMES[(rootST+6)%12] + '7';
+    }
+    if (quality === 'major') return root+'maj7';
+    if (quality === 'minor') return root+'m7';
+    return chord;
+  });
+  return { name:"Tritone Substitutions", style:"Bebop", chords:newChords,
+    technique:"Replace dominant chords with tritone substitutes",
+    feel:"Chromatic, surprising movement", difficulty:"Advanced" };
+}
+
+function applyModalInterchange(chords, key) {
+  var keyST = ROOT_MAP[key] || 0;
+  var newChords = chords.map(function(chord, i) {
+    var root = parseChordRoot(chord);
+    var quality = parseChordQuality(chord);
+    var rootST = ROOT_MAP[root];
+    if (rootST === undefined) return chord;
+    var interval = ((rootST - keyST) + 12) % 12;
+    if (interval === 5 && quality === 'major') return root+'m7';
+    if (interval === 5 && quality === 'minor') return root;
+    if (interval === 0 && quality === 'major' && i > 0 && i < chords.length - 1) return root+'m';
+    if (interval === 7 && quality === 'major') return NOTE_NAMES[(keyST+10)%12];
+    if (quality === 'major' && !chord.includes('7')) return root+'maj7';
+    if (quality === 'minor' && !chord.includes('7')) return root+'m7';
+    return chord;
+  });
+  return { name:"Modal Interchange", style:"Neo-Soul", chords:newChords,
+    technique:"Borrow chords from parallel minor/major",
+    feel:"Bittersweet color shifts", difficulty:"Intermediate" };
+}
+
+function applySecondaryDominants(chords, key) {
+  var newChords = chords.map(function(chord, i) {
+    if (i === 0 || i === chords.length - 1) return chord;
+    var nextRoot = parseChordRoot(chords[i + 1]);
+    var nextST = ROOT_MAP[nextRoot];
+    if (nextST === undefined) return chord;
+    var secDomRoot = NOTE_NAMES[(nextST + 7) % 12];
+    if (!chord.includes('7')) return secDomRoot+'7';
+    return chord;
+  });
+  return { name:"Secondary Dominants", style:"Classical", chords:newChords,
+    technique:"Add V7/x before target chords",
+    feel:"Strong directional pull", difficulty:"Beginner" };
+}
+
+function localReharmonize(inputChords, keyInput) {
+  var key = keyInput || detectKey(inputChords);
+  var analysis = inputChords.map(function(c) { return chordAnalysis(c, key); });
+  var reharmonizations = [
+    applyJazzExtensions(inputChords, key),
+    applyTritoneSubs(inputChords, key),
+    applyModalInterchange(inputChords, key),
+    applySecondaryDominants(inputChords, key),
+  ];
+  return { key:key, original:inputChords, analysis:analysis, reharmonizations:reharmonizations };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 6: REACT COMPONENTS
+   ═══════════════════════════════════════════════════════════════════ */
+
+// --- VoiceLeadingDisplay ---
+function VoiceLeadingDisplay(props) {
+  var chords = props.chords;
+  var key = chords.join(",");
+  var vlData = React.useMemo(function() { return analyzeVoiceLeading(chords); }, [key]);
+  if (vlData.length === 0) return null;
+  return React.createElement('div', { style: { overflowX:'auto', marginTop:6 } },
+    React.createElement('div', { style: { fontSize:7, fontFamily:'monospace', color:MUTED, marginBottom:2 } }, 'VOICE LEADING'),
+    React.createElement('div', { style: { display:'flex', gap:2 } },
+      vlData.map(function(v, i) {
+        return React.createElement('div', { key:i, style: { minWidth:44, textAlign:'center' } },
+          React.createElement('div', { style: { fontSize:8, fontFamily:'Georgia,serif', color:TEXT, marginBottom:2 } }, v.label),
+          v.voiced.map(function(note, ni) {
+            var movement = v.movements[ni];
+            var bgColor = movement === undefined ? CARD : movement === 0 ? EXT_C+'33' : movement <= 2 ? ACCENT+'33' : DIMCOL;
+            return React.createElement('div', { key:ni, style: {
+              fontSize:7, fontFamily:'monospace', color:TEXT, background:bgColor,
+              borderRadius:2, padding:'0 2px', marginBottom:1
+            } },
+              midiNoteName(note),
+              movement !== undefined ? React.createElement('span', { style: { color:MUTED, marginLeft:2 } },
+                movement === 0 ? '=' : '↕'+movement
+              ) : null
+            );
+          }),
+          React.createElement('div', { style: { fontSize:6, fontFamily:'monospace', marginTop:1,
+            color: i > 0 ? (v.smooth ? EXT_C : ALT_C) : MUTED
+          } }, i > 0 ? (v.smooth ? 'smooth' : 'leap') : '—')
+        );
+      })
+    )
+  );
+}
+
+// --- TensionMeterBar ---
+function TensionMeterBar(props) {
+  var chords = props.chords, activeIdx = props.activeIdx;
+  var maxH = 30;
+  return React.createElement('div', { style: { marginTop:6 } },
+    React.createElement('div', { style: { fontSize:7, fontFamily:'monospace', color:MUTED, marginBottom:2 } }, 'TENSION'),
+    React.createElement('div', { style: { display:'flex', gap:2, alignItems:'flex-end', height:maxH } },
+      chords.map(function(c, i) {
+        var ts = tensionScore(c);
+        var h = (ts / 10) * maxH;
+        var isActive = activeIdx === i;
+        var color = isActive ? ACCENT : ts > 6 ? ALT_C : ts > 3 ? DOM7 : EXT_C;
+        return React.createElement('div', { key:i, style: {
+          flex:1, height:Math.max(h, 2), background:color,
+          borderRadius:'2px 2px 0 0', transition:'height 0.2s'
+        } });
+      })
+    )
+  );
+}
+
+// --- InfoPanel ---
+function InfoPanel(props) {
+  var selected = props.selected, onChordClick = props.onChordClick, onAdd = props.onAdd;
+  if (!selected) {
+    return React.createElement('div', { style: { width:185, padding:12, color:MUTED, fontFamily:'monospace', fontSize:9, borderLeft:'1px solid '+BORDER } },
+      'Select a chord to see details'
+    );
+  }
+  var node = NODES[selected];
+  var color = node ? TYPE_COLOR[node.type] : TEXT;
+  var outgoing = {}, incoming = {};
+  EDGES.forEach(function(e) {
+    if (e.from === selected || (e.bi && e.to === selected)) {
+      var target = e.from === selected ? e.to : e.from;
+      if (!outgoing[e.type]) outgoing[e.type] = [];
+      if (outgoing[e.type].indexOf(target) === -1) outgoing[e.type].push(target);
+    }
+    if (e.to === selected || (e.bi && e.from === selected)) {
+      var source = e.to === selected ? e.from : e.to;
+      if (!incoming[e.type]) incoming[e.type] = [];
+      if (incoming[e.type].indexOf(source) === -1) incoming[e.type].push(source);
+    }
+  });
+  var ts = tensionScore(selected);
+  return React.createElement('div', { style: { width:185, padding:10, overflowY:'auto', borderLeft:'1px solid '+BORDER, maxHeight:'60vh' } },
+    React.createElement('div', { style: { fontSize:16, fontFamily:'Georgia,serif', color:color, marginBottom:4 } }, selected),
+    React.createElement('div', { style: { fontSize:8, fontFamily:'monospace', color:MUTED, marginBottom:8 } },
+      (node ? node.type : '') + ' · cluster ' + (node ? node.cluster : '')
+    ),
+    // Tension
+    React.createElement('div', { style: { marginBottom:8 } },
+      React.createElement('div', { style: { fontSize:7, fontFamily:'monospace', color:MUTED, marginBottom:2 } }, 'TENSION'),
+      React.createElement('div', { style: { height:4, background:DIMCOL, borderRadius:2 } },
+        React.createElement('div', { style: { height:4, width:ts*10+'%',
+          background: ts > 6 ? ALT_C : ts > 3 ? DOM7 : EXT_C, borderRadius:2 } })
+      )
+    ),
+    // Add button
+    onAdd ? React.createElement('button', { onClick:function() { onAdd(selected); }, style: {
+      background:ACCENT, color:BG, border:'none', borderRadius:4,
+      padding:'3px 8px', fontSize:8, fontFamily:'monospace', cursor:'pointer',
+      marginBottom:8, width:'100%'
+    } }, '+ add to progression') : null,
+    // Outgoing
+    React.createElement('div', { style: { fontSize:7, fontFamily:'monospace', color:MUTED, marginBottom:2 } }, 'PATHS FROM'),
+    Object.keys(outgoing).map(function(type) {
+      var et = EDGE_TYPES[type];
+      return React.createElement('div', { key:type, style: { marginBottom:4 } },
+        React.createElement('div', { style: { fontSize:7, color: et ? et.color.slice(0,7) : MUTED, fontFamily:'monospace' } }, et ? et.label : type),
+        React.createElement('div', { style: { display:'flex', flexWrap:'wrap', gap:3 } },
+          outgoing[type].map(function(t) {
+            return React.createElement('span', { key:t, onClick:function() { onChordClick(t); }, style: {
+              fontSize:8, padding:'1px 4px', borderRadius:3,
+              background:DIMCOL, color:TEXT, cursor:'pointer', fontFamily:'Georgia,serif'
+            } }, t);
+          })
+        )
+      );
+    }),
+    // Incoming
+    React.createElement('div', { style: { fontSize:7, fontFamily:'monospace', color:MUTED, marginTop:6, marginBottom:2 } }, 'PATHS TO'),
+    Object.keys(incoming).map(function(type) {
+      var et = EDGE_TYPES[type];
+      return React.createElement('div', { key:type, style: { marginBottom:4 } },
+        React.createElement('div', { style: { fontSize:7, color: et ? et.color.slice(0,7) : MUTED, fontFamily:'monospace' } }, et ? et.label : type),
+        React.createElement('div', { style: { display:'flex', flexWrap:'wrap', gap:3 } },
+          incoming[type].map(function(s) {
+            return React.createElement('span', { key:s, onClick:function() { onChordClick(s); }, style: {
+              fontSize:8, padding:'1px 4px', borderRadius:3,
+              background:DIMCOL, color:TEXT, cursor:'pointer', fontFamily:'Georgia,serif'
+            } }, s);
+          })
+        )
+      );
+    })
+  );
+}
+
+// --- HarmonicMap ---
+function HarmonicMap(props) {
+  var mode = props.mode, size = props.size, selected = props.selected;
+  var onSelect = props.onSelect, visibleNodes = props.visibleNodes;
+  var activeEdgeTypes = props.activeEdgeTypes, activeChord = props.activeChord;
+  var progression = props.progression, showRoman = props.showRoman;
+  var contextKey = props.contextKey;
+  var nodeR = mode === "radial" ? 16 : 14;
+
+  var getPos = function(id) {
+    var node = NODES[id];
+    if (!node) return { x:0, y:0 };
+    return mode === "radial" ? radialPos(node.cluster, node.type, size) : graphPos(node.cluster, node.type, size);
+  };
+
+  var reachable = new Set();
+  var sources = new Set();
+  if (selected) {
+    EDGES.forEach(function(e) {
+      if (e.from === selected) reachable.add(e.to);
+      if (e.to === selected) sources.add(e.from);
+      if (e.bi && e.to === selected) reachable.add(e.from);
+      if (e.bi && e.from === selected) sources.add(e.to);
+    });
+  }
+
+  var visibleEdges = EDGES.filter(function(e) {
+    if (!activeEdgeTypes.has(e.type)) return false;
+    var fn = NODES[e.from], tn = NODES[e.to];
+    if (!fn || !tn) return false;
+    if (!visibleNodes.has(fn.type) || !visibleNodes.has(tn.type)) return false;
+    return true;
+  });
+
+  var progSet = new Set(progression);
+
+  var visibleEntries = Object.keys(NODES).filter(function(id) {
+    return visibleNodes.has(NODES[id].type);
+  });
+
+  // Build defs markers
+  var markerTypes = {};
+  Object.keys(EDGE_TYPES).forEach(function(t) {
+    if (activeEdgeTypes.has(t)) markerTypes[t] = EDGE_TYPES[t];
+  });
+
+  return (
+    <svg width={size} height={size} style={{ background:'transparent' }}>
+      <defs>
+        {Object.keys(markerTypes).map(function(t) {
+          var et = markerTypes[t];
+          return (
+            <marker key={'mk-'+t} id={'mk-'+t} viewBox="0 0 10 10" refX="8" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,2 L10,5 L0,8" fill={et.color.slice(0,7)} />
+            </marker>
+          );
+        })}
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+
+      {/* Guide rings (radial only) */}
+      {mode === "radial" ? Object.keys(RING_R).filter(function(t) { return visibleNodes.has(t); }).map(function(t) {
+        return <circle key={'ring-'+t} cx={size/2} cy={size/2} r={size*RING_R[t]}
+          fill="none" stroke={BORDER} strokeWidth="0.5" strokeDasharray="4,4" />;
+      }) : null}
+
+      {/* Progression path trace (radial only) */}
+      {mode === "radial" && progression.length > 1 ? (
+        <path d={progression.map(function(c, i) {
+          var p = getPos(c);
+          return (i === 0 ? 'M' : 'L') + p.x + ',' + p.y;
+        }).join(' ')}
+          fill="none" stroke={ACCENT} strokeWidth="1.5" strokeDasharray="6,4" opacity="0.4" />
+      ) : null}
+
+      {/* Edges */}
+      {visibleEdges.map(function(e, idx) {
+        var fp = getPos(e.from), tp = getPos(e.to);
+        var dx = tp.x - fp.x, dy = tp.y - fp.y;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 1) return null;
+        var ux = dx/dist, uy = dy/dist;
+        var x1 = fp.x + ux*(nodeR+1), y1 = fp.y + uy*(nodeR+1);
+        var x2 = tp.x - ux*(nodeR+5), y2 = tp.y - uy*(nodeR+5);
+        var mx = (x1+x2)/2 + (-uy)*14, my = (y1+y2)/2 + ux*14;
+        var et = EDGE_TYPES[e.type];
+        var opacity = selected
+          ? ((e.from === selected || e.to === selected) ? 0.92 : 0.08)
+          : 0.60;
+        return (
+          <path key={'e-'+idx} d={'M'+x1+','+y1+' Q'+mx+','+my+' '+x2+','+y2}
+            fill="none" stroke={et.color} strokeWidth={et.weight}
+            strokeDasharray={et.dashed ? "5,4" : "none"} opacity={opacity}
+            markerEnd={'url(#mk-'+e.type+')'}
+            markerStart={e.bi ? 'url(#mk-'+e.type+')' : undefined} />
+        );
+      })}
+
+      {/* Nodes */}
+      {visibleEntries.map(function(id) {
+        var node = NODES[id];
+        var pos = getPos(id);
+        var color = TYPE_COLOR[node.type];
+        var isActive = activeChord === id;
+        var isSelected = selected === id;
+        var isReachable = reachable.has(id);
+        var isSource = sources.has(id);
+        var inProg = progSet.has(id);
+        var fill = CARD, stroke = color, sw = 1, extra = null;
+
+        if (isActive) {
+          fill = color; stroke = color; sw = 2.5;
+          extra = (
+            <React.Fragment>
+              <circle cx={pos.x} cy={pos.y} r={nodeR+6} fill="none" stroke={color}
+                strokeWidth="1" opacity="0.4" filter="url(#glow)" />
+              <circle cx={pos.x} cy={pos.y} r={nodeR+4} fill="none" stroke={color}
+                strokeWidth="1.5" opacity="0.6" style={{ animation:'pulse-ring 1.5s infinite' }} />
+            </React.Fragment>
+          );
+        } else if (isSelected) {
+          fill = color; stroke = color; sw = 2.5;
+        } else if (isReachable) {
+          fill = color+'55'; stroke = color; sw = 2;
+        } else if (isSource) {
+          fill = '#ffffff15'; stroke = color; sw = 2;
+        } else if (inProg) {
+          fill = CARD; stroke = ACCENT; sw = 1.5;
+          extra = <circle cx={pos.x} cy={pos.y} r={nodeR+3} fill="none" stroke={ACCENT}
+            strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />;
+        }
+
+        var roman = showRoman && contextKey && DIATONIC_IN_KEY[contextKey]
+          ? DIATONIC_IN_KEY[contextKey][id] : null;
+
+        return (
+          <g key={id} onClick={function() { onSelect(id); }} style={{ cursor:'pointer' }}>
+            {extra}
+            <circle cx={pos.x} cy={pos.y} r={nodeR} fill={fill} stroke={stroke} strokeWidth={sw} />
+            <text x={pos.x} y={pos.y + (roman ? -2 : 1)} textAnchor="middle" dominantBaseline="middle"
+              fill={isActive || isSelected ? BG : TEXT} fontSize={id.length > 3 ? 7 : 9}
+              fontFamily="Georgia,serif" fontWeight="bold">{id}</text>
+            {roman ? (
+              <text x={pos.x} y={pos.y+8} textAnchor="middle" fontSize="6"
+                fill={MUTED} fontFamily="monospace">{roman}</text>
+            ) : null}
+          </g>
+        );
+      })}
+
+      {/* Ring labels (radial only) */}
+      {mode === "radial" ? Object.keys(RING_R).filter(function(t) { return visibleNodes.has(t); }).map(function(t) {
+        var a = -75 * Math.PI / 180;
+        var x = size/2 + size*RING_R[t]*Math.cos(a);
+        var y = size/2 + size*RING_R[t]*Math.sin(a);
+        return <text key={'rl-'+t} x={x} y={y} fill={MUTED} fontSize="7" fontFamily="monospace"
+          textAnchor="middle" dominantBaseline="middle" opacity="0.6">{t}</text>;
+      }) : null}
+
+      {/* Center circle (radial only) */}
+      {mode === "radial" ? (
+        <React.Fragment>
+          <circle cx={size/2} cy={size/2} r={size*0.05} fill={SURFACE} stroke={BORDER} strokeWidth="1" />
+          <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="middle"
+            fill={activeChord ? ACCENT : (selected ? TEXT : MUTED)} fontSize="11"
+            fontFamily="Georgia,serif" fontWeight="bold">{activeChord || selected || "♫"}</text>
+        </React.Fragment>
+      ) : null}
+    </svg>
+  );
+}
+
+// --- Controls ---
+function Controls(props) {
+  var visibleNodes = props.visibleNodes, onToggleNode = props.onToggleNode;
+  var activeEdgeTypes = props.activeEdgeTypes, onToggleEdge = props.onToggleEdge;
+  var showRoman = props.showRoman, setShowRoman = props.setShowRoman;
+  var contextKey = props.contextKey, setContextKey = props.setContextKey;
+
+  var ringToggles = [
+    { type:"major", label:"Major", color:MAJOR, locked:true },
+    { type:"minor", label:"Minor", color:MINOR },
+    { type:"dom7", label:"Dom7", color:DOM7 },
+    { type:"dim", label:"Dim°", color:DIMIN },
+  ];
+
+  return (
+    <div style={{ padding:'6px 10px', background:SURFACE, borderBottom:'1px solid '+BORDER }}>
+      <div style={{ display:'flex', gap:4, marginBottom:4, flexWrap:'wrap', alignItems:'center' }}>
+        {ringToggles.map(function(rt) {
+          var active = visibleNodes.has(rt.type);
+          return (
+            <button key={rt.type} onClick={function() { if (!rt.locked) onToggleNode(rt.type); }}
+              style={{ background: active ? rt.color+'33' : DIMCOL, color: active ? rt.color : MUTED,
+                border:'1px solid '+(active ? rt.color : BORDER), borderRadius:4,
+                padding:'2px 6px', fontSize:8, cursor: rt.locked ? 'default' : 'pointer',
+                fontFamily:'monospace', display:'flex', alignItems:'center', gap:3 }}>
+              <span style={{ display:'inline-block', width:6, height:6, borderRadius:'50%',
+                background:rt.color }} />
+              {rt.label}
+            </button>
+          );
+        })}
+        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:4 }}>
+          <button onClick={function() { setShowRoman(!showRoman); }}
+            style={{ background: showRoman ? ACCENT+'33' : DIMCOL, color: showRoman ? ACCENT : MUTED,
+              border:'1px solid '+(showRoman ? ACCENT : BORDER), borderRadius:4,
+              padding:'2px 6px', fontSize:8, cursor:'pointer', fontFamily:'monospace' }}>Roman</button>
+          {showRoman ? (
+            <select value={contextKey} onChange={function(e) { setContextKey(e.target.value); }}
+              style={{ background:CARD, color:TEXT, border:'1px solid '+BORDER,
+                borderRadius:4, padding:'1px 4px', fontSize:8, fontFamily:'monospace' }}>
+              {["C","G","D","F","Bb","Am"].map(function(k) { return <option key={k} value={k}>{k}</option>; })}
+            </select>
+          ) : null}
+        </div>
+      </div>
+      <div style={{ display:'flex', gap:3, flexWrap:'wrap' }}>
+        {Object.keys(EDGE_TYPES).map(function(type) {
+          var et = EDGE_TYPES[type];
+          var active = activeEdgeTypes.has(type);
+          var c = et.color.slice(0,7);
+          return (
+            <button key={type} onClick={function() { onToggleEdge(type); }}
+              style={{ background: active ? c+'22' : DIMCOL, color: active ? c : MUTED,
+                border:'1px solid '+(active ? c : BORDER), borderRadius:4,
+                padding:'1px 5px', fontSize:7, cursor:'pointer', fontFamily:'monospace' }}>
+              {et.dashed ? '╌' : '─'}→ {et.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- ProgressionBuilder ---
+function ProgressionBuilder(props) {
+  var progression = props.progression, onProgChange = props.onProgChange;
+  var bpm = props.bpm, onBpmChange = props.onBpmChange;
+  var beatsPerChord = props.beatsPerChord, onBeatsChange = props.onBeatsChange;
+  var onActiveIdxChange = props.onActiveIdxChange;
+
+  var _isPlaying = React.useState(false);
+  var isPlaying = _isPlaying[0], setIsPlaying = _isPlaying[1];
+  var _isLooping = React.useState(false);
+  var isLooping = _isLooping[0], setIsLooping = _isLooping[1];
+  var _activeIdx = React.useState(-1);
+  var activeIdx = _activeIdx[0], setActiveIdxLocal = _activeIdx[1];
+  var playingRef = React.useRef(false);
+  var loopRef = React.useRef(false);
+
+  var setActive = function(idx) {
+    setActiveIdxLocal(idx);
+    onActiveIdxChange(idx);
+  };
+
+  var play = async function() {
+    if (progression.length === 0 || playingRef.current) return;
+    playingRef.current = true;
+    setIsPlaying(true);
+    resetVoicing();
+    loopRef.current = isLooping;
+    var shouldContinue = true;
+    while (shouldContinue) {
+      await playProgWithVL(progression, bpm, setActive, beatsPerChord);
+      shouldContinue = loopRef.current && !_playStop;
+    }
+    setIsPlaying(false);
+    setActive(-1);
+    playingRef.current = false;
+  };
+
+  var stop = function() {
+    loopRef.current = false;
+    stopPlay();
+  };
+
+  var clear = function() {
+    stop();
+    onProgChange([]);
+    resetVoicing();
+  };
+
+  var moveChord = function(i, dir) {
+    var np = progression.slice();
+    var j = i + dir;
+    if (j < 0 || j >= np.length) return;
+    var tmp = np[i]; np[i] = np[j]; np[j] = tmp;
+    onProgChange(np);
+  };
+
+  var dupChord = function(i) {
+    var np = progression.slice();
+    np.splice(i + 1, 0, progression[i]);
+    onProgChange(np);
+  };
+
+  var removeChord = function(i) {
+    onProgChange(progression.filter(function(_, idx) { return idx !== i; }));
+  };
+
+  return (
+    <div style={{ borderTop:'1px solid '+BORDER, padding:8, background:SURFACE }}>
+      {/* Transport */}
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+        <label style={{ fontSize:8, fontFamily:'monospace', color:MUTED, display:'flex', alignItems:'center', gap:3 }}>
+          BPM {bpm}
+          <input type="range" min="40" max="200" value={bpm}
+            onChange={function(e) { onBpmChange(+e.target.value); }}
+            style={{ width:60, accentColor:ACCENT }} />
+        </label>
+        {[1,2,4].map(function(b) {
+          return <button key={b} onClick={function() { onBeatsChange(b); }}
+            style={{ background: beatsPerChord === b ? ACCENT : DIMCOL,
+              color: beatsPerChord === b ? BG : TEXT, border:'none', borderRadius:4,
+              padding:'2px 6px', fontSize:8, cursor:'pointer', fontFamily:'monospace' }}>{b}♩</button>;
+        })}
+        <button onClick={function() { var nv = !isLooping; setIsLooping(nv); loopRef.current = nv; }}
+          style={{ background: isLooping ? ACCENT : DIMCOL, color: isLooping ? BG : TEXT,
+            border:'none', borderRadius:4, padding:'2px 6px', fontSize:10, cursor:'pointer' }}>↺</button>
+        <button onClick={isPlaying ? stop : play}
+          style={{ background: isPlaying ? ALT_C : EXT_C, color:BG, border:'none',
+            borderRadius:4, padding:'3px 10px', fontSize:9, cursor:'pointer', fontFamily:'monospace' }}>
+          {isPlaying ? '⏹ Stop' : '▶ Play'}
+        </button>
+        <button onClick={function() { if (progression.length > 0) exportMidi(progression, bpm, beatsPerChord); }}
+          style={{ background:DIMCOL, color:TEXT, border:'none', borderRadius:4,
+            padding:'2px 6px', fontSize:9, cursor:'pointer' }}>⬇</button>
+        <button onClick={clear}
+          style={{ background:DIMCOL, color:ALT_C, border:'none', borderRadius:4,
+            padding:'2px 6px', fontSize:9, cursor:'pointer' }}>✕</button>
+      </div>
+      {/* Chord slots */}
+      <div style={{ display:'flex', gap:4, overflowX:'auto', paddingBottom:4, flexWrap:'wrap' }}>
+        {progression.length > 0 ? progression.map(function(chord, i) {
+          var isAct = activeIdx === i;
+          var ts = tensionScore(chord);
+          var tsColor = ts > 6 ? ALT_C : ts > 3 ? DOM7 : EXT_C;
+          return (
+            <div key={i} style={{
+              background: isAct ? ACCENT+'22' : CARD, border:'1px solid '+(isAct ? ACCENT : BORDER),
+              borderRadius:5, padding:'4px 6px', minWidth:44, position:'relative',
+              boxShadow: isAct ? '0 0 8px '+ACCENT+'44' : 'none'
+            }}>
+              <div onClick={function() { playOne(chord); }} style={{
+                fontSize:10, fontFamily:'Georgia,serif', color:TEXT, cursor:'pointer',
+                textAlign:'center', marginBottom:2 }}>{chord}</div>
+              <div style={{ height:3, background:DIMCOL, borderRadius:1, marginBottom:3 }}>
+                <div style={{ height:3, width:ts*10+'%', background: isAct ? ACCENT : tsColor, borderRadius:1 }} />
+              </div>
+              <div style={{ display:'flex', justifyContent:'center', gap:3 }}>
+                <span onClick={function() { moveChord(i,-1); }} style={{ fontSize:9, cursor:'pointer', color:MUTED }}>‹</span>
+                <span onClick={function() { moveChord(i,1); }} style={{ fontSize:9, cursor:'pointer', color:MUTED }}>›</span>
+                <span onClick={function() { dupChord(i); }} style={{ fontSize:9, cursor:'pointer', color:EXT_C }}>⊕</span>
+                <span onClick={function() { removeChord(i); }} style={{ fontSize:9, cursor:'pointer', color:ALT_C }}>✕</span>
+              </div>
+            </div>
+          );
+        }) : (
+          <div style={{ color:MUTED, fontSize:9, fontFamily:'monospace', padding:8 }}>
+            Tap chords on the map to build a progression
+          </div>
+        )}
+      </div>
+      {/* Tension meter */}
+      {progression.length > 0 ? <TensionMeterBar chords={progression} activeIdx={activeIdx} /> : null}
+      {/* Voice leading */}
+      {progression.length > 1 ? <VoiceLeadingDisplay chords={progression} /> : null}
+    </div>
+  );
+}
+
+// --- Reharm Cards ---
+function ReharmCard(props) {
+  var rh = props.rh, onSendToBuild = props.onSendToBuild;
+  var diffColors = { Beginner:EXT_C, Intermediate:ACCENT, Advanced:ALT_C };
+  return (
+    <div style={{ background:CARD, border:'1px solid '+BORDER, borderRadius:7, padding:10, marginBottom:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+        <div>
+          <span style={{ fontSize:11, fontFamily:'Georgia,serif', color:TEXT }}>{rh.name}</span>
+          <span style={{ fontSize:7, fontFamily:'monospace', color:MUTED, marginLeft:6 }}>{rh.style}</span>
+        </div>
+        <span style={{ fontSize:7, fontFamily:'monospace', padding:'1px 5px', borderRadius:8,
+          background:(diffColors[rh.difficulty]||MUTED)+'22',
+          color:diffColors[rh.difficulty]||MUTED }}>{rh.difficulty}</span>
+      </div>
+      <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginBottom:6 }}>
+        {rh.chords.map(function(c, i) {
+          return <span key={i} onClick={function() { playOne(c); }}
+            style={{ background:DIMCOL, color:TEXT, padding:'2px 6px', borderRadius:4,
+              fontSize:10, fontFamily:'Georgia,serif', cursor:'pointer' }}>{c}</span>;
+        })}
+      </div>
+      <div style={{ display:'flex', gap:4, marginBottom:4 }}>
+        <button onClick={function() { resetVoicing(); playProgWithVL(rh.chords, 80, function(){}, 2); }}
+          style={{ background:EXT_C, color:BG, border:'none', borderRadius:4,
+            padding:'2px 8px', fontSize:8, cursor:'pointer' }}>▶▶</button>
+        <button onClick={function() { exportMidi(rh.chords, 80, 2); }}
+          style={{ background:DIMCOL, color:TEXT, border:'none', borderRadius:4,
+            padding:'2px 8px', fontSize:8, cursor:'pointer' }}>⬇</button>
+        <button onClick={function() { onSendToBuild(rh.chords); }}
+          style={{ background:ACCENT+'22', color:ACCENT, border:'1px solid '+ACCENT+'44',
+            borderRadius:4, padding:'2px 8px', fontSize:8, cursor:'pointer' }}>→ Builder</button>
+      </div>
+      <div style={{ fontSize:8, fontFamily:'monospace', color:MUTED, marginBottom:2 }}>{rh.technique}</div>
+      <div style={{ fontSize:8, fontFamily:'Georgia,serif', color:TEXT, fontStyle:'italic' }}>"{rh.feel}"</div>
+      <VoiceLeadingDisplay chords={rh.chords} />
+    </div>
+  );
+}
+
+function ChordAnalysisCard(props) {
+  var data = props.data;
+  var _exp = React.useState(false);
+  var expanded = _exp[0], setExpanded = _exp[1];
+
+  return (
+    <div style={{ background:CARD, border:'1px solid '+BORDER, borderRadius:7, padding:8, marginBottom:6 }}>
+      <div onClick={function() { setExpanded(!expanded); }}
+        style={{ cursor:'pointer', display:'flex', justifyContent:'space-between' }}>
+        <div>
+          <span style={{ fontSize:11, fontFamily:'Georgia,serif', color:TEXT }}>{data.chord}</span>
+          <span style={{ fontSize:8, fontFamily:'monospace', color:MUTED, marginLeft:6 }}>{data.roman}</span>
+          <span style={{ fontSize:8, fontFamily:'monospace', color:MUTED, marginLeft:6 }}>{data.function}</span>
+        </div>
+        <span style={{ color:MUTED, fontSize:10 }}>{expanded ? '▼' : '▶'}</span>
+      </div>
+      {expanded ? (
+        <div style={{ marginTop:6 }}>
+          {Object.keys(TAG_COLOR).map(function(category) {
+            var color = TAG_COLOR[category];
+            var items = category === 'secondary_dom'
+              ? (data.secondary_dom ? [data.secondary_dom] : [])
+              : (data[category] || []);
+            if (items.length === 0) return null;
+            return (
+              <div key={category} style={{ marginBottom:4 }}>
+                <div style={{ fontSize:7, fontFamily:'monospace', color:MUTED, marginBottom:2 }}>
+                  {category.toUpperCase().replace('_',' ')}
+                </div>
+                <div style={{ display:'flex', gap:3, flexWrap:'wrap' }}>
+                  {items.map(function(item, i) {
+                    return <span key={i} onClick={function() { playOne(item); }}
+                      style={{ background:color+'22', color:color, border:'1px solid '+color+'44',
+                        padding:'1px 5px', borderRadius:4, fontSize:8,
+                        fontFamily:'Georgia,serif', cursor:'pointer' }}>{item}</span>;
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ fontSize:8, fontFamily:'Georgia,serif', color:TEXT, fontStyle:'italic', marginTop:4 }}>
+            "{data.feel}"
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// --- Saved Panel ---
+function SavedPanel(props) {
+  var saved = props.saved, setSaved = props.setSaved, onSendToBuild = props.onSendToBuild;
+  var deleteSaved = function(idx) {
+    var ns = saved.filter(function(_, i) { return i !== idx; });
+    setSaved(ns);
+    storage.set("rh-saved", ns);
+  };
+  if (saved.length === 0) {
+    return <div style={{ color:MUTED, fontSize:9, fontFamily:'monospace', padding:20, textAlign:'center' }}>No saved progressions</div>;
+  }
+  return (
+    <div>
+      {saved.map(function(s, i) {
+        return (
+          <div key={i} style={{ background:CARD, border:'1px solid '+BORDER, borderRadius:5,
+            padding:'6px 8px', marginBottom:4, display:'flex', alignItems:'center', gap:6 }}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:10, fontFamily:'Georgia,serif', color:TEXT }}>{s.prog}</div>
+              <div style={{ fontSize:7, fontFamily:'monospace', color:MUTED }}>
+                {s.key ? 'Key: '+s.key : ''} · {new Date(s.savedAt).toLocaleDateString()}
+              </div>
+            </div>
+            <button onClick={function() { onSendToBuild(s.prog.split(/\s+/)); }}
+              style={{ background:ACCENT+'22', color:ACCENT, border:'none', borderRadius:3,
+                padding:'2px 5px', fontSize:8, cursor:'pointer' }}>→</button>
+            <button onClick={function() { resetVoicing(); playProgWithVL(s.prog.split(/\s+/), 80, function(){}, 2); }}
+              style={{ background:EXT_C+'22', color:EXT_C, border:'none', borderRadius:3,
+                padding:'2px 5px', fontSize:8, cursor:'pointer' }}>▶</button>
+            <button onClick={function() { deleteSaved(i); }}
+              style={{ background:ALT_C+'22', color:ALT_C, border:'none', borderRadius:3,
+                padding:'2px 5px', fontSize:8, cursor:'pointer' }}>✕</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// --- Presets Panel ---
+var GENRE_PRESETS = [
+  { name:"🎬 Bollywood", presets: [
+    { name:"Sad Minor", chords:["Am","G","F","E"], key:"Am" },
+    { name:"Filmi Romance", chords:["C","Am","F","G"], key:"C" },
+    { name:"Dramatic", chords:["Dm","Bb","C","Am"], key:"Dm" },
+    { name:"Dev Anand", chords:["C","E7","Am","F","G7","C"], key:"C" },
+    { name:"Item Song", chords:["G","D","Em","C"], key:"G" },
+  ]},
+  { name:"🎷 Jazz", presets: [
+    { name:"ii–V–I", chords:["Dm7","G7","Cmaj7"], key:"C" },
+    { name:"Rhythm Changes", chords:["C","Am","Dm","G7"], key:"C" },
+    { name:"Coltrane Cycle", chords:["C","E7","Ab7","F"], key:"C" },
+    { name:"Autumn Leaves", chords:["Cm7","F7","Bbmaj7","Ebmaj7"], key:"Bb" },
+    { name:"Deceptive", chords:["G7","Em","Am","Dm","G7","C"], key:"C" },
+  ]},
+  { name:"🎬 Film", presets: [
+    { name:"Epic Arrival", chords:["C","Bb","F","C"], key:"C" },
+    { name:"Bittersweet", chords:["C","Am","F","Ab"], key:"C" },
+    { name:"Triumph", chords:["F","C","G","Am"], key:"C" },
+    { name:"Dream Float", chords:["Cmaj7","Bm7","E7","Am7"], key:"C" },
+    { name:"Tension", chords:["Am","E","Am","Dm","E"], key:"Am" },
+  ]},
+  { name:"🎸 Pop/Rock", presets: [
+    { name:"Axis of Awesome", chords:["C","G","Am","F"], key:"C" },
+    { name:"50s", chords:["C","Am","F","G"], key:"C" },
+    { name:"Pachelbel", chords:["D","A","Bm","F#","G","D","G","A"], key:"D" },
+    { name:"Minor Anthem", chords:["Am","F","C","G"], key:"Am" },
+    { name:"Andalusian", chords:["Am","G","F","E"], key:"Am" },
+  ]},
+  { name:"💃 Flamenco/World", presets: [
+    { name:"Phrygian", chords:["Am","G","F","E"], key:"Am" },
+    { name:"Hijaz", chords:["Am","Bb","E","Am"], key:"Am" },
+    { name:"Bossa Nova", chords:["Cmaj7","A7","Dm7","G7"], key:"C" },
+    { name:"Tango", chords:["Am","E7","Dm","E7","Am"], key:"Am" },
+    { name:"Rumba", chords:["Am","F","E","Am"], key:"Am" },
+  ]},
+];
+
+function PresetsPanel(props) {
+  var onAnalyze = props.onAnalyze, onSendToBuild = props.onSendToBuild;
+  return (
+    <div>
+      {GENRE_PRESETS.map(function(genre) {
+        return (
+          <div key={genre.name} style={{ marginBottom:10 }}>
+            <div style={{ fontSize:11, fontFamily:'Georgia,serif', color:TEXT, marginBottom:6 }}>{genre.name}</div>
+            {genre.presets.map(function(preset) {
+              return (
+                <div key={preset.name} style={{ background:CARD, border:'1px solid '+BORDER, borderRadius:5,
+                  padding:'6px 8px', marginBottom:4, display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                  <span style={{ fontSize:9, fontFamily:'Georgia,serif', color:TEXT, minWidth:80 }}>{preset.name}</span>
+                  <div style={{ display:'flex', gap:3, flex:1, flexWrap:'wrap' }}>
+                    {preset.chords.map(function(c, i) {
+                      return <span key={i} onClick={function() { playOne(c); }}
+                        style={{ fontSize:8, padding:'1px 4px', borderRadius:3,
+                          background:DIMCOL, color:TEXT, cursor:'pointer', fontFamily:'Georgia,serif' }}>{c}</span>;
+                    })}
+                  </div>
+                  <div style={{ display:'flex', gap:3 }}>
+                    <button onClick={function() { resetVoicing(); playProgWithVL(preset.chords, 80, function(){}, 2); }}
+                      style={{ background:EXT_C+'22', color:EXT_C, border:'none', borderRadius:3,
+                        padding:'2px 5px', fontSize:8, cursor:'pointer' }}>▶</button>
+                    <button onClick={function() { onSendToBuild(preset.chords); }}
+                      style={{ background:ACCENT+'22', color:ACCENT, border:'none', borderRadius:3,
+                        padding:'2px 5px', fontSize:8, cursor:'pointer' }}>→</button>
+                    <button onClick={function() { onAnalyze(preset.chords.join(' '), preset.key); }}
+                      style={{ background:SUB_C+'22', color:SUB_C, border:'none', borderRadius:3,
+                        padding:'2px 5px', fontSize:8, cursor:'pointer' }}>🔄</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// --- Modulation Path Finder ---
+var PIVOT_MAP = {
+  "C-G":["Em","G"],"G-C":["Em","C"],"G-D":["Bm","D"],"D-G":["Bm","G"],
+  "D-A":["F#m","A"],"A-D":["F#m","D"],"A-E":["C#m","E"],"E-A":["C#m","A"],
+  "E-B":["G#m","B"],"B-E":["G#m","E"],"B-F#":["D#m","F#"],"F#-B":["D#m","B"],
+  "F#-Db":["Bbm"],"Db-F#":["Bbm"],
+  "Db-Ab":["Fm","Ab"],"Ab-Db":["Fm","Db"],"Ab-Eb":["Cm","Eb"],"Eb-Ab":["Cm","Ab"],
+  "Eb-Bb":["Gm","Bb"],"Bb-Eb":["Gm","Eb"],"Bb-F":["Dm","F"],"F-Bb":["Dm","Bb"],
+  "F-C":["Am","C"],"C-F":["Am","F"],
+};
+
+function ModFinder() {
+  var KEYS = ["C","G","D","A","E","B","F#","Db","Ab","Eb","Bb","F"];
+  var _from = React.useState("C"); var fromKey = _from[0], setFromKey = _from[1];
+  var _to = React.useState("G"); var toKey = _to[0], setToKey = _to[1];
+  var _path = React.useState(null); var pathResult = _path[0], setPathResult = _path[1];
+
+  var findPath = function() {
+    var adj = {};
+    KEYS.forEach(function(k, i) { adj[k] = [KEYS[(i+1)%12], KEYS[(i+11)%12]]; });
+    var queue = [[fromKey]];
+    var visited = new Set([fromKey]);
+    while (queue.length > 0) {
+      var path = queue.shift();
+      var last = path[path.length - 1];
+      if (last === toKey) { setPathResult(path); return; }
+      adj[last].forEach(function(next) {
+        if (!visited.has(next)) { visited.add(next); queue.push(path.concat([next])); }
+      });
+    }
+    setPathResult([fromKey]);
+  };
+
+  return (
+    <div>
+      <div style={{ display:'flex', gap:6, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+        <label style={{ fontSize:8, fontFamily:'monospace', color:MUTED }}>FROM</label>
+        <select value={fromKey} onChange={function(e){setFromKey(e.target.value);}}
+          style={{ background:CARD, color:TEXT, border:'1px solid '+BORDER, borderRadius:4, padding:'3px 6px', fontSize:9, fontFamily:'Georgia,serif' }}>
+          {KEYS.map(function(k) { return <option key={k} value={k}>{k}</option>; })}
+        </select>
+        <label style={{ fontSize:8, fontFamily:'monospace', color:MUTED }}>TO</label>
+        <select value={toKey} onChange={function(e){setToKey(e.target.value);}}
+          style={{ background:CARD, color:TEXT, border:'1px solid '+BORDER, borderRadius:4, padding:'3px 6px', fontSize:9, fontFamily:'Georgia,serif' }}>
+          {KEYS.map(function(k) { return <option key={k} value={k}>{k}</option>; })}
+        </select>
+        <button onClick={findPath}
+          style={{ background:ACCENT, color:BG, border:'none', borderRadius:5,
+            padding:'4px 10px', fontSize:9, cursor:'pointer', fontFamily:'monospace' }}>Find Path</button>
+      </div>
+      {pathResult ? (
+        <div>
+          <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap', alignItems:'center' }}>
+            {pathResult.map(function(k, i) {
+              return (
+                <React.Fragment key={i}>
+                  <span onClick={function() { playOne(k); }}
+                    style={{ background: (i === 0 || i === pathResult.length - 1) ? ACCENT+'33' : CARD,
+                      border:'1px solid '+((i === 0 || i === pathResult.length - 1) ? ACCENT : BORDER),
+                      color:TEXT, padding:'3px 8px', borderRadius:5,
+                      fontSize:11, fontFamily:'Georgia,serif', cursor:'pointer' }}>{k}</span>
+                  {i < pathResult.length - 1 ? (
+                    <span style={{ color:MUTED, fontSize:9 }}>→</span>
+                  ) : null}
+                </React.Fragment>
+              );
+            })}
+          </div>
+          <button onClick={function() { resetVoicing(); playProgWithVL(pathResult, 80, function(){}, 2); }}
+            style={{ background:EXT_C, color:BG, border:'none', borderRadius:5,
+              padding:'4px 10px', fontSize:9, cursor:'pointer', marginBottom:10 }}>▶ Play Path</button>
+          {pathResult.map(function(k, i) {
+            if (i >= pathResult.length - 1) return null;
+            var next = pathResult[i + 1];
+            var pivots = PIVOT_MAP[k+'-'+next] || [];
+            return (
+              <div key={i} style={{ background:CARD, border:'1px solid '+BORDER, borderRadius:5, padding:8, marginBottom:4 }}>
+                <div style={{ fontSize:9, fontFamily:'Georgia,serif', color:TEXT, marginBottom:4 }}>{k} → {next}</div>
+                <div style={{ fontSize:8, fontFamily:'monospace', color:MUTED, marginBottom:2 }}>Pivot chords:</div>
+                <div style={{ display:'flex', gap:4 }}>
+                  {pivots.length > 0 ? pivots.map(function(p) {
+                    return <span key={p} onClick={function() { playOne(p); }}
+                      style={{ background:SUB_C+'22', color:SUB_C, padding:'2px 6px',
+                        borderRadius:4, fontSize:9, fontFamily:'Georgia,serif', cursor:'pointer' }}>{p}</span>;
+                  }) : (
+                    <span style={{ fontSize:8, color:MUTED, fontFamily:'monospace' }}>Direct modulation</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ color:MUTED, fontSize:9, fontFamily:'monospace', padding:20, textAlign:'center' }}>
+          Select keys and click Find Path
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- ReharmPanel ---
+function ReharmPanel(props) {
+  var progression = props.progression, onProgChange = props.onProgChange, onSetPage = props.onSetPage;
+  var _input = React.useState(progression.join(' ')); var input = _input[0], setInput = _input[1];
+  var _keyIn = React.useState(''); var keyInput = _keyIn[0], setKeyInput = _keyIn[1];
+  var _result = React.useState(null); var result = _result[0], setResult = _result[1];
+  var _tab = React.useState('reharm'); var tab = _tab[0], setTab = _tab[1];
+  var _saved = React.useState([]); var saved = _saved[0], setSaved = _saved[1];
+
+  React.useEffect(function() {
+    var data = storage.get('rh-saved');
+    if (data) setSaved(data);
+  }, []);
+
+  var analyzeInput = function(chordsStr, k) {
+    var chords = chordsStr.trim().split(/\s+/).filter(Boolean);
+    if (chords.length === 0) return;
+    var res = localReharmonize(chords, k || null);
+    setResult(res);
+    setTab('reharm');
+  };
+
+  var analyze = function() { analyzeInput(input, keyInput); };
+
+  var playInput = function() {
+    var chords = input.trim().split(/\s+/).filter(Boolean);
+    if (chords.length > 0) { resetVoicing(); playProgWithVL(chords, 80, function(){}, 2); }
+  };
+
+  var saveProgression = function() {
+    var prog = input.trim();
+    if (!prog) return;
+    var ns = [
+      { prog:prog, key: keyInput || detectKey(prog.split(/\s+/)), savedAt: new Date().toISOString() }
+    ].concat(saved.filter(function(s) { return s.prog !== prog; })).slice(0, 20);
+    setSaved(ns);
+    storage.set('rh-saved', ns);
+  };
+
+  var sendToBuild = function(chords) {
+    onProgChange(chords);
+    onSetPage('build');
+  };
+
+  var tabs = [
+    { id:'reharm', label:'🎵 Reharm' },
+    { id:'analysis', label:'🔬 Analysis' },
+    { id:'voicelead', label:'〰 VoiceLead' },
+    { id:'saved', label:'💾 Saved' },
+    { id:'presets', label:'🎸 Presets' },
+    { id:'modpath', label:'🔀 Mod Path' },
+  ];
+
+  return (
+    <div style={{ flex:1, overflow:'auto', padding:10 }}>
+      {/* Input bar */}
+      <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap', alignItems:'center' }}>
+        <input value={input} onChange={function(e){setInput(e.target.value);}}
+          placeholder="Dm G7 C Am" style={{ flex:1, minWidth:120, background:CARD, color:TEXT,
+            border:'1px solid '+BORDER, borderRadius:5, padding:'5px 8px', fontSize:10,
+            fontFamily:'Georgia,serif' }} />
+        <input value={keyInput} onChange={function(e){setKeyInput(e.target.value);}}
+          placeholder="Key" style={{ width:40, background:CARD, color:TEXT,
+            border:'1px solid '+BORDER, borderRadius:5, padding:'5px 6px', fontSize:10,
+            fontFamily:'Georgia,serif' }} />
+        <button onClick={analyze} style={{ background:ACCENT, color:BG, border:'none',
+          borderRadius:5, padding:'5px 10px', fontSize:9, cursor:'pointer', fontFamily:'monospace', fontWeight:'bold' }}>Analyze</button>
+        <button onClick={playInput} style={{ background:EXT_C, color:BG, border:'none',
+          borderRadius:5, padding:'5px 8px', fontSize:9, cursor:'pointer' }}>▶</button>
+        <button onClick={saveProgression} style={{ background:DIMCOL, color:TEXT, border:'none',
+          borderRadius:5, padding:'5px 8px', fontSize:9, cursor:'pointer' }}>💾</button>
+        <button onClick={function() {
+          var ch = input.trim().split(/\s+/).filter(Boolean);
+          if (ch.length > 0) exportMidi(ch, 80, 2);
+        }} style={{ background:DIMCOL, color:TEXT, border:'none',
+          borderRadius:5, padding:'5px 8px', fontSize:9, cursor:'pointer' }}>⬇</button>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display:'flex', gap:2, marginBottom:10, flexWrap:'wrap' }}>
+        {tabs.map(function(t) {
+          return <button key={t.id} onClick={function(){setTab(t.id);}}
+            style={{ background: tab === t.id ? ACCENT+'22' : 'transparent',
+              color: tab === t.id ? ACCENT : MUTED,
+              border:'1px solid '+(tab === t.id ? ACCENT+'66' : BORDER),
+              borderRadius:12, padding:'3px 8px', fontSize:8, cursor:'pointer', fontFamily:'monospace' }}>{t.label}</button>;
+        })}
+      </div>
+
+      {/* Tab content */}
+      {tab === 'reharm' ? (result ? result.reharmonizations.map(function(rh, i) {
+        return <ReharmCard key={i} rh={rh} onSendToBuild={sendToBuild} />;
+      }) : <div style={{ color:MUTED, fontSize:9, fontFamily:'monospace', padding:20, textAlign:'center' }}>
+        Enter a chord progression and press Analyze
+      </div>) : null}
+
+      {tab === 'analysis' ? (result ? result.analysis.map(function(a, i) {
+        return <ChordAnalysisCard key={i} data={a} />;
+      }) : <div style={{ color:MUTED, fontSize:9, fontFamily:'monospace', padding:20, textAlign:'center' }}>
+        Analyze a progression first
+      </div>) : null}
+
+      {tab === 'voicelead' ? (function() {
+        var chords = input.trim().split(/\s+/).filter(Boolean);
+        return chords.length > 1 ? React.createElement(VoiceLeadingDisplay, { chords:chords }) : (
+          <div style={{ color:MUTED, fontSize:9, fontFamily:'monospace', padding:20, textAlign:'center' }}>
+            Enter at least 2 chords to see voice leading
+          </div>
+        );
+      })() : null}
+
+      {tab === 'saved' ? <SavedPanel saved={saved} setSaved={setSaved} onSendToBuild={sendToBuild} /> : null}
+
+      {tab === 'presets' ? <PresetsPanel onAnalyze={function(chStr, k) {
+        setInput(chStr); setKeyInput(k); analyzeInput(chStr, k);
+      }} onSendToBuild={sendToBuild} /> : null}
+
+      {tab === 'modpath' ? <ModFinder /> : null}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 7: APP ROOT
+   ═══════════════════════════════════════════════════════════════════ */
+
+function App() {
+  var _page = React.useState('build'); var page = _page[0], setPage = _page[1];
+  var _sel = React.useState(null); var selected = _sel[0], setSelected = _sel[1];
+  var _ms = React.useState(380); var mapSize = _ms[0], setMapSize = _ms[1];
+  var _vn = React.useState(function() { return new Set(["major","minor","dom7","dim"]); });
+  var visibleNodes = _vn[0], setVisibleNodes = _vn[1];
+  var _ae = React.useState(function() { return new Set(Object.keys(EDGE_TYPES)); });
+  var activeEdgeTypes = _ae[0], setActiveEdgeTypes = _ae[1];
+  var _prog = React.useState([]); var progression = _prog[0], setProgression = _prog[1];
+  var _aci = React.useState(-1); var activeChordIdx = _aci[0], setActiveChordIdx = _aci[1];
+  var _bpm = React.useState(80); var bpm = _bpm[0], setBpm = _bpm[1];
+  var _bpc = React.useState(2); var beatsPerChord = _bpc[0], setBeatsPerChord = _bpc[1];
+  var _sr = React.useState(false); var showRoman = _sr[0], setShowRoman = _sr[1];
+  var _ck = React.useState('C'); var contextKey = _ck[0], setContextKey = _ck[1];
+
+  var containerRef = React.useRef(null);
+
+  React.useEffect(function() {
+    if (!containerRef.current) return;
+    var ro = new ResizeObserver(function(entries) {
+      var w = entries[0].contentRect.width;
+      setMapSize(Math.max(240, Math.min(w - 200, 480)));
+    });
+    ro.observe(containerRef.current);
+    return function() { ro.disconnect(); };
+  }, []);
+
+  var activeChord = activeChordIdx >= 0 && activeChordIdx < progression.length
+    ? progression[activeChordIdx] : null;
+  var isBuild = page === 'build';
+  var isMap = page === 'radial' || page === 'graph';
+
+  var handleBuildSelect = function(id) {
+    setSelected(id);
+    playOne(id);
+    setProgression(function(p) { return p.concat([id]); });
+  };
+
+  var handleMapSelect = function(id) {
+    setSelected(function(p) { return p === id ? null : id; });
+    playOne(id);
+  };
+
+  var toggleNode = function(type) {
+    setVisibleNodes(function(prev) {
+      var next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  };
+
+  var toggleEdge = function(type) {
+    setActiveEdgeTypes(function(prev) {
+      var next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  };
+
+  var avgTension = progression.length > 0
+    ? (progression.reduce(function(s, c) { return s + tensionScore(c); }, 0) / progression.length).toFixed(1)
+    : 0;
+
+  var navItems = [
+    { id:'build', label:'🎹 Build' },
+    { id:'radial', label:'⭕ Radial Map' },
+    { id:'graph', label:'🔗 Graph Map' },
+    { id:'reharm', label:'🎵 Reharmonize' },
+  ];
+
+  return (
+    <div ref={containerRef} style={{ minHeight:'100vh', background:BG, color:TEXT }}>
+      {/* Header */}
+      <div style={{ padding:'10px 14px', background:SURFACE, borderBottom:'1px solid '+BORDER,
+        display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <h1 style={{ margin:0, fontSize:17, fontFamily:'Georgia,serif', color:TEXT,
+          background:'linear-gradient(90deg, '+ACCENT+', '+MAJOR+')', WebkitBackgroundClip:'text',
+          WebkitTextFillColor:'transparent' }}>
+          ♫ Illustrated Harmony
+        </h1>
+        <span style={{ fontSize:7, fontFamily:'monospace', color:MUTED }}>v2.0 · Offline</span>
+      </div>
+
+      {/* Nav */}
+      <div style={{ display:'flex', padding:'4px 10px', background:SURFACE,
+        borderBottom:'1px solid '+BORDER, alignItems:'center', gap:4, flexWrap:'wrap' }}>
+        {navItems.map(function(p) {
+          return <button key={p.id} onClick={function(){ setPage(p.id); }}
+            style={{ background: page === p.id ? ACCENT+'22' : 'transparent',
+              color: page === p.id ? ACCENT : MUTED,
+              border:'1px solid '+(page === p.id ? ACCENT+'55' : 'transparent'),
+              borderRadius:14, padding:'3px 10px', fontSize:9, cursor:'pointer', fontFamily:'monospace' }}>{p.label}</button>;
+        })}
+        {progression.length > 0 ? (
+          <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:4 }}>
+            <span style={{ fontSize:7, fontFamily:'monospace', color:MUTED }}>TENSION</span>
+            <div style={{ width:40, height:4, background:DIMCOL, borderRadius:2 }}>
+              <div style={{ width: avgTension*10+'%', height:4,
+                background: avgTension > 6 ? ALT_C : avgTension > 3 ? DOM7 : EXT_C,
+                borderRadius:2, transition:'width 0.3s' }} />
+            </div>
+            <span style={{ fontSize:7, fontFamily:'monospace', color:TEXT }}>{avgTension}</span>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Build & Map pages */}
+      {(isBuild || isMap) ? (
+        <div>
+          <Controls visibleNodes={visibleNodes} onToggleNode={toggleNode}
+            activeEdgeTypes={activeEdgeTypes} onToggleEdge={toggleEdge}
+            showRoman={showRoman} setShowRoman={setShowRoman}
+            contextKey={contextKey} setContextKey={setContextKey} />
+          <div style={{ display:'flex' }}>
+            <div style={{ flex:1, display:'flex', justifyContent:'center', padding:8 }}>
+              <HarmonicMap
+                mode={page === 'graph' ? 'graph' : 'radial'}
+                size={mapSize}
+                selected={selected}
+                onSelect={isBuild ? handleBuildSelect : handleMapSelect}
+                visibleNodes={visibleNodes}
+                activeEdgeTypes={activeEdgeTypes}
+                activeChord={activeChord}
+                progression={progression}
+                showRoman={showRoman}
+                contextKey={contextKey} />
+            </div>
+            <InfoPanel selected={selected}
+              onChordClick={function(c) { playOne(c); }}
+              onAdd={isBuild ? function(c) { setProgression(function(p) { return p.concat([c]); }); } : null} />
+          </div>
+          {isBuild ? (
+            <ProgressionBuilder
+              progression={progression} onProgChange={setProgression}
+              bpm={bpm} onBpmChange={setBpm}
+              beatsPerChord={beatsPerChord} onBeatsChange={setBeatsPerChord}
+              onActiveIdxChange={setActiveChordIdx} />
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Reharm page */}
+      {page === 'reharm' ? (
+        <ReharmPanel progression={progression} onProgChange={setProgression} onSetPage={setPage} />
+      ) : null}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SECTION 8: RENDER
+   ═══════════════════════════════════════════════════════════════════ */
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+</script>
+</body>
+</html>
