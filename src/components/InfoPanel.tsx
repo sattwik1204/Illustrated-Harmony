@@ -8,9 +8,10 @@ interface InfoPanelProps {
   selected: string | null;
   onChordClick: (chord: string) => void;
   onAdd?: (chord: string) => void;
+  isBottomMode?: boolean;
 }
 
-export const InfoPanel: React.FC<InfoPanelProps> = ({ selected, onChordClick, onAdd }) => {
+export const InfoPanel: React.FC<InfoPanelProps> = ({ selected, onChordClick, onAdd, isBottomMode }) => {
   if (!selected) {
     return (
       <div style={{ width: 185, padding: 12, color: MUTED, fontFamily: 'monospace', fontSize: 9, borderLeft: `1px solid ${BORDER}` }}>
@@ -40,21 +41,31 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({ selected, onChordClick, on
   const ts = tensionScore(selected);
 
   return (
-    <div style={{ width: 185, padding: 10, overflowY: 'auto', borderLeft: `1px solid ${BORDER}`, maxHeight: '60vh' }}>
-      <div style={{ fontSize: 16, fontFamily: 'Georgia, serif', color: color, marginBottom: 4 }}>{selected}</div>
-      <div style={{ fontSize: 8, fontFamily: 'monospace', color: MUTED, marginBottom: 8 }}>
-        {(node ? node.type : '') + ' · cluster ' + (node ? node.cluster : '')}
+    <div style={{ 
+      width: isBottomMode ? '100%' : 240, 
+      padding: 24, 
+      overflowY: 'auto', 
+      borderLeft: isBottomMode ? 'none' : `1px solid ${BORDER}`, 
+      borderTop: isBottomMode ? `1px solid ${BORDER}` : 'none',
+      maxHeight: isBottomMode ? 280 : '60vh',
+      display: isBottomMode ? 'flex' : 'block',
+      gap: isBottomMode ? 32 : 0,
+      background: 'rgba(13, 13, 26, 0.4)'
+    }}>
+      <div style={{ fontSize: 24, fontWeight: 'bold', fontFamily: 'Georgia, serif', color: color, marginBottom: 8 }}>{selected}</div>
+      <div style={{ fontSize: 11, fontFamily: 'monospace', color: MUTED, marginBottom: 16 }}>
+        {(node ? node.type : '') + ' · CLUSTER ' + (node ? node.cluster : '')}
       </div>
 
       {/* Tension */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 7, fontFamily: 'monospace', color: MUTED, marginBottom: 2 }}>TENSION</div>
-        <div style={{ height: 4, background: DIMCOL, borderRadius: 2 }}>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 10, fontFamily: 'monospace', color: MUTED, marginBottom: 6 }}>TENSION</div>
+        <div style={{ height: 6, background: DIMCOL, borderRadius: 3 }}>
           <div style={{
-            height: 4,
+            height: 6,
             width: ts * 10 + '%',
             background: ts > 6 ? ALT_C : ts > 3 ? DOM7 : EXT_C,
-            borderRadius: 2
+            borderRadius: 3
           }} />
         </div>
       </div>
@@ -67,37 +78,38 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({ selected, onChordClick, on
             background: ACCENT,
             color: '#080810',
             border: 'none',
-            borderRadius: 4,
-            padding: '3px 8px',
-            fontSize: 8,
+            borderRadius: 8,
+            padding: '12px 16px',
+            fontSize: 11,
+            fontWeight: 'bold',
             fontFamily: 'monospace',
             cursor: 'pointer',
-            marginBottom: 8,
+            marginBottom: 20,
             width: '100%'
           }}
         >
-          + add to progression
+          + ADD TO PROGRESSION
         </button>
       )}
 
       {/* Outgoing */}
-      <div style={{ fontSize: 7, fontFamily: 'monospace', color: MUTED, marginBottom: 2 }}>PATHS FROM</div>
+      <div style={{ fontSize: 10, fontFamily: 'monospace', color: MUTED, marginBottom: 6 }}>PATHS FROM</div>
       {Object.keys(outgoing).map((type) => {
         const et = EDGE_TYPES[type];
         return (
-          <div key={type} style={{ marginBottom: 4 }}>
-            <div style={{ fontSize: 7, color: et ? et.color.slice(0, 7) : MUTED, fontFamily: 'monospace' }}>
+          <div key={type} style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 10, color: et ? et.color.slice(0, 7) : MUTED, fontFamily: 'monospace' }}>
               {et ? et.label : type}
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {outgoing[type].map((t) => (
                 <span
                   key={t}
                   onClick={() => onChordClick(t)}
                   style={{
-                    fontSize: 8,
-                    padding: '1px 4px',
-                    borderRadius: 3,
+                    fontSize: 11,
+                    padding: '3px 8px',
+                    borderRadius: 4,
                     background: DIMCOL,
                     color: TEXT,
                     cursor: 'pointer',
@@ -113,23 +125,23 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({ selected, onChordClick, on
       })}
 
       {/* Incoming */}
-      <div style={{ fontSize: 7, fontFamily: 'monospace', color: MUTED, marginTop: 6, marginBottom: 2 }}>PATHS TO</div>
+      <div style={{ fontSize: 10, fontFamily: 'monospace', color: MUTED, marginTop: 12, marginBottom: 6 }}>PATHS TO</div>
       {Object.keys(incoming).map((type) => {
         const et = EDGE_TYPES[type];
         return (
-          <div key={type} style={{ marginBottom: 4 }}>
-            <div style={{ fontSize: 7, color: et ? et.color.slice(0, 7) : MUTED, fontFamily: 'monospace' }}>
+          <div key={type} style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 10, color: et ? et.color.slice(0, 7) : MUTED, fontFamily: 'monospace' }}>
               {et ? et.label : type}
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {incoming[type].map((s) => (
                 <span
                   key={s}
                   onClick={() => onChordClick(s)}
                   style={{
-                    fontSize: 8,
-                    padding: '1px 4px',
-                    borderRadius: 3,
+                    fontSize: 11,
+                    padding: '3px 8px',
+                    borderRadius: 4,
                     background: DIMCOL,
                     color: TEXT,
                     cursor: 'pointer',

@@ -11,19 +11,18 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ currentPage, setPage }) => {
   const navItems = [
     { id: 'build', label: 'BUILD', icon: '✎' },
-    { id: 'radial', label: 'RADIAL', icon: '❂' },
-    { id: 'graph', label: 'GRAPH', icon: '☍' },
     { id: 'reharm', label: 'REHARM', icon: '⚛' },
+    { id: 'guide', label: 'GUIDE', icon: '⚲' },
   ];
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', padding: '0 20px', height: 48,
-      background: 'rgba(13, 13, 26, 0.8)', backdropFilter: 'blur(12px)',
-      borderBottom: `1px solid var(--border)`, gap: 20
+      display: 'flex', alignItems: 'center', padding: '0 32px', height: 60,
+      background: 'rgba(13, 13, 26, 0.85)', backdropFilter: 'blur(16px)',
+      borderBottom: `1px solid var(--border)`, gap: 32
     }}>
       <div style={{
-        fontSize: 11, fontWeight: 'bold', letterSpacing: '2px', color: 'var(--accent)',
+        fontSize: 13, fontWeight: 'bold', letterSpacing: '3px', color: 'var(--accent)',
         fontFamily: 'monospace', marginRight: 10, textShadow: '0 0 10px var(--accent-glow)'
       }}>COLOURED HARMONY</div>
       <div style={{ display: 'flex', gap: 4, height: '100%', alignItems: 'center' }}>
@@ -35,10 +34,10 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, setPage }) => {
               background: currentPage === item.id ? 'var(--glass-hover)' : 'transparent',
               color: currentPage === item.id ? 'var(--text)' : 'var(--muted)',
               border: 'none',
-              padding: '0 16px',
-              height: 32,
-              borderRadius: 6,
-              fontSize: 10,
+              padding: '0 24px',
+              height: 40,
+              borderRadius: 8,
+              fontSize: 12,
               cursor: 'pointer',
               fontFamily: 'monospace',
               display: 'flex',
@@ -49,8 +48,8 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, setPage }) => {
               overflow: 'hidden'
             }}
           >
-            <span style={{ fontSize: 13, display: 'flex', alignItems: 'center' }}>{item.icon}</span>
-            <span style={{ fontWeight: currentPage === item.id ? 'bold' : 'normal' }}>{item.label}</span>
+            <span style={{ fontSize: 16, display: 'flex', alignItems: 'center' }}>{item.icon}</span>
+            <span style={{ fontWeight: currentPage === item.id ? 'bold' : 'normal', letterSpacing:0.5 }}>{item.label}</span>
             {currentPage === item.id && (
               <div style={{
                 position: 'absolute', bottom: 0, left: '10%', right: '10%', height: 2,

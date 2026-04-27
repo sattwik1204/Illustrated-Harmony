@@ -22,6 +22,9 @@ body {
   background: var(--bg); 
   color: var(--text); 
   font-family: 'Outfit', 'Georgia', serif; 
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden; 
 }
 
@@ -38,11 +41,12 @@ h1, h2, h3 { font-family: 'Georgia', serif; font-weight: bold; }
   background: var(--glass);
   border: 1px solid var(--glass-border);
   color: var(--text);
-  backdrop-filter: blur(10px);
-  padding: 4px 12px;
-  border-radius: 8px;
-  font-size: 11px;
+  backdrop-filter: blur(12px);
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 12px;
   font-family: monospace;
+  letter-spacing: 0.5px;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
@@ -53,8 +57,9 @@ h1, h2, h3 { font-family: 'Georgia', serif; font-weight: bold; }
 
 .btn-glass:hover {
   background: var(--glass-hover);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
 }
 
 .btn-glass.active {
@@ -69,16 +74,16 @@ input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   background: var(--border);
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 3px;
   cursor: pointer;
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   background: var(--accent);
   border-radius: 50%;
   box-shadow: 0 0 10px var(--accent-glow);
@@ -98,4 +103,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
+}
+
+/* Responsive Tweaks */
+@media (max-width: 1000px) {
+  body { font-size: 14px; }
+  .btn-glass { padding: 6px 14px; font-size: 11px; }
+  input[type="range"]::-webkit-slider-thumb { width:16px; height:16px; }
 }

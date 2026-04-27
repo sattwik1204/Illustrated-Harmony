@@ -7,6 +7,7 @@ import { InfoPanel } from '@/components/InfoPanel';
 import { Controls } from '@/components/Controls';
 import { ProgressionBuilder } from '@/components/ProgressionBuilder';
 import { ReharmPanel } from '@/components/reharm/ReharmPanel';
+import { Guide } from '@/components/Guide';
 import { 
   ChordType, EDGE_TYPES, BORDER, BG 
 } from '@/lib/theory-data';
@@ -25,6 +26,19 @@ export default function Home() {
   const [beatsPerChord, setBeatsPerChord] = useState(2);
   const [showRoman, setShowRoman] = useState(false);
   const [contextKey, setContextKey] = useState("C");
+  const [mapMode, setMapMode] = useState<'radial' | 'graph'>('radial');
+  const [mounted, setMounted] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(1200);
+
+  useEffect(() => {
+    setMounted(true);
+    setWindowWidth(window.innerWidth);
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isSmall = windowWidth < 1000;
 
 
 
@@ -52,7 +66,7 @@ export default function Home() {
           const h = entry.contentRect.height;
           // Guard against 0 or negative values during unmount/remount
           if (w > 0 && h > 0) {
-            setMapSize(Math.max(Math.min(w, h) - 20, 200));
+            setMapSize(Math.max(Math.min(w, h) - 40, isSmall ? 350 : 380));
           }
         }
       });
@@ -95,7 +109,9 @@ export default function Home() {
           onProgChange={setProgression} 
           onSetPage={setPage} 
         />
-      ) : (
+      ) : page === 'guide' ? (
+        <Guide />
+      ) : mounted ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <Controls
             visibleNodes={visibleNodes}
@@ -106,15 +122,18 @@ export default function Home() {
             setShowRoman={setShowRoman}
             contextKey={contextKey}
             setContextKey={setContextKey}
+            mapMode={mapMode}
+            setMapMode={setMapMode}
           />
 
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: isSmall ? 'column' : 'row', overflow: 'hidden' }}>
             <div ref={containerRef} style={{
-              flex: 1, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', position: 'relative', overflow: 'hidden'
+              flex: 3, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', position: 'relative', overflow: 'hidden',
+              minHeight: isSmall ? 400 : 'auto'
             }}>
               <HarmonicMap
-                mode={page as 'radial' | 'graph'}
+                mode={mapMode}
                 size={mapSize}
                 selected={selected}
                 onSelect={handleSelect}
@@ -131,6 +150,7 @@ export default function Home() {
               selected={selected}
               onChordClick={handleSelect}
               onAdd={addToProg}
+              isBottomMode={isSmall}
             />
           </div>
 
@@ -142,7 +162,12 @@ export default function Home() {
             beatsPerChord={beatsPerChord}
             onBeatsChange={setBeatsPerChord}
             onActiveIdxChange={setActiveChordIdx}
+            onSetPage={setPage}
           />
+        </div>
+      ) : (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', background: BG }}>
+          Initializing harmonic engine...
         </div>
       )}
     </div>

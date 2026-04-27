@@ -27,7 +27,12 @@ export const HarmonicMap: React.FC<HarmonicMapProps> = ({
   activeEdgeTypes, activeChord, progression, 
   showRoman, contextKey
 }) => {
-  const nodeR = mode === "radial" ? 16 : 14;
+  // Adaptive scaling based on size
+  const scale = size / 500;
+  const baseR = mode === "radial" ? 22 : 18;
+  const nodeR = Math.max(baseR * Math.min(scale, 1.2), 14);
+  const labelFontSize = Math.max(12 * scale, 9);
+  const romanFontSize = Math.max(9 * scale, 7);
 
   const getPos = (id: string) => {
     const node = NODES[id];
@@ -118,7 +123,7 @@ export const HarmonicMap: React.FC<HarmonicMapProps> = ({
           : 0.60;
         return (
           <path key={'e-' + idx} d={'M' + x1 + ',' + y1 + ' Q' + mx + ',' + my + ' ' + x2 + ',' + y2}
-            fill="none" stroke={et.color} strokeWidth={et.weight}
+            fill="none" stroke={et.color} strokeWidth={et.weight + 1}
             strokeDasharray={et.dashed ? "5,4" : "none"} opacity={opacity}
             markerEnd={'url(#mk-' + e.type + ')'}
             markerStart={e.bi ? 'url(#mk-' + e.type + ')' : undefined} />
@@ -170,13 +175,13 @@ export const HarmonicMap: React.FC<HarmonicMapProps> = ({
             {extra}
             <circle cx={pos.x} cy={pos.y} r={nodeR} fill={fill} stroke={stroke} strokeWidth={sw} 
               style={{ transition: 'all 0.3s ease' }} />
-            <text x={pos.x} y={pos.y + (roman ? -3 : 1)} textAnchor="middle" dominantBaseline="middle"
-              fill={isActive || isSelected ? '#080810' : 'var(--text)'} fontSize={id.length > 3 ? 7 : 10}
+            <text x={pos.x} y={pos.y + 1} textAnchor="middle" dominantBaseline="middle"
+              fill={isActive || isSelected ? '#080810' : 'var(--text)'} fontSize={labelFontSize}
               fontFamily="Georgia,serif" fontWeight="bold" style={{ pointerEvents: 'none' }}>{id}</text>
             {roman ? (
-              <text x={pos.x} y={pos.y + 7} textAnchor="middle" fontSize="6.5"
+              <text x={pos.x} y={pos.y + (nodeR * 0.7)} textAnchor="middle" dominantBaseline="middle" fontSize={romanFontSize}
                 fill={isActive || isSelected ? '#080810aa' : 'var(--muted)'} 
-                fontFamily="monospace" style={{ pointerEvents: 'none' }}>{roman}</text>
+                fontFamily="monospace" fontWeight="bold" style={{ pointerEvents: 'none', opacity: 0.8 }}>{roman}</text>
             ) : null}
           </g>
         );
@@ -187,7 +192,7 @@ export const HarmonicMap: React.FC<HarmonicMapProps> = ({
         const a = -75 * Math.PI / 180;
         const x = size / 2 + size * RING_R[t] * Math.cos(a);
         const y = size / 2 + size * RING_R[t] * Math.sin(a);
-        return <text key={'rl-' + t} x={x} y={y} fill={MUTED} fontSize="7" fontFamily="monospace"
+        return <text key={'rl-' + t} x={x} y={y} fill={MUTED} fontSize="9" fontFamily="monospace"
           textAnchor="middle" dominantBaseline="middle" opacity="0.6">{t}</text>;
       }) : null}
 
