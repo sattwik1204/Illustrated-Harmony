@@ -13,13 +13,15 @@ interface ControlsProps {
   onToggleEdge: (type: string) => void;
   showRoman: boolean;
   setShowRoman: (val: boolean) => void;
-  contextKey: string;
-  setContextKey: (val: string) => void;
+  contextKey: string | null;
+  setContextKey: (k: string) => void;
+  mapMode: 'radial' | 'graph';
+  setMapMode: (m: 'radial' | 'graph') => void;
 }
 
 export const Controls: React.FC<ControlsProps> = ({
-  visibleNodes, onToggleNode, activeEdgeTypes, onToggleEdge,
-  showRoman, setShowRoman, contextKey, setContextKey
+  visibleNodes, onToggleNode, activeEdgeTypes,  onToggleEdge, showRoman, setShowRoman, contextKey, setContextKey,
+  mapMode, setMapMode
 }) => {
   const ringToggles = [
     { type: "major" as ChordType, label: "Major", color: MAJOR, locked: true },
@@ -29,8 +31,8 @@ export const Controls: React.FC<ControlsProps> = ({
   ];
 
   return (
-    <div style={{ padding: '10px 16px', background: 'rgba(13, 13, 26, 0.4)', borderBottom: `1px solid var(--border)`, backdropFilter: 'blur(8px)' }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div style={{ padding: '12px 16px', background: 'rgba(13, 13, 26, 0.4)', borderBottom: `1px solid var(--border)`, backdropFilter: 'blur(8px)' }}>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         {ringToggles.map((rt) => {
           const active = visibleNodes.has(rt.type);
           return (
@@ -56,7 +58,7 @@ export const Controls: React.FC<ControlsProps> = ({
             <span>{showRoman ? '👁' : '◌'}</span> Roman
           </button>
           {showRoman && (
-            <select value={contextKey} onChange={(e) => setContextKey(e.target.value)}
+            <select value={contextKey || ''} onChange={(e) => setContextKey(e.target.value)}
               style={{
                 background: 'var(--card)',
                 color: 'var(--text)',
@@ -72,8 +74,17 @@ export const Controls: React.FC<ControlsProps> = ({
             </select>
           )}
         </div>
+
+        <div style={{ display: 'flex', background: 'var(--glass)', padding: 2, borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+          <button onClick={() => setMapMode('radial')}
+            className={`btn-glass ${mapMode === 'radial' ? 'active' : ''}`}
+            style={{ border: 'none', padding: '2px 8px', fontSize: 9 }}>RADIAL</button>
+          <button onClick={() => setMapMode('graph')}
+            className={`btn-glass ${mapMode === 'graph' ? 'active' : ''}`}
+            style={{ border: 'none', padding: '2px 8px', fontSize: 9 }}>GRAPH</button>
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {Object.keys(EDGE_TYPES).map((type) => {
           const et = EDGE_TYPES[type];
           const active = activeEdgeTypes.has(type);
